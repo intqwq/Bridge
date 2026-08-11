@@ -22,7 +22,7 @@ jobs:
       - name: Validate Compose model
         run: |
           docker compose --env-file .env.example config --quiet
-          docker compose --env-file .env.example config | grep -q '127.0.0.1:18080'
+          grep -Fq '127.0.0.1:${EDGE_PORT:-18080}:8080' compose.yml
       - name: Validate rendered Nginx edge
         run: |
           docker run --rm \

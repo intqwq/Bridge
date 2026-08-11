@@ -113,4 +113,5 @@ for domain in "${algoquest_domain}" "${intqwq_domain}" "${intqwq_www_domain}"; d
   as_operator cloudflared tunnel route dns --overwrite-dns "${tunnel_id}" "${domain}"
 done
 
+bash "${script_dir}/retire-legacy-networking.sh"
 echo "[Bridge] Tunnel ${tunnel_id} routes every hostname through http://127.0.0.1:${edge_port}."

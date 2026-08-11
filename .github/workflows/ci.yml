@@ -22,16 +22,19 @@ jobs:
       - name: Validate Compose model
         run: |
           docker compose --env-file .env.example config --quiet
-          grep -Fq '127.0.0.1:${EDGE_PORT:-18080}:8080' compose.yml
+          grep -q 'network_mode: host' compose.yml
+          ! grep -q 'host.docker.internal' compose.yml .env.example
+          grep -Fq 'listen 127.0.0.1:${EDGE_PORT}' nginx/default.conf.template
       - name: Validate rendered Nginx edge
         run: |
           docker run --rm \
+            -e EDGE_PORT=18080 \
             -e ALGOQUEST_DOMAIN=game.example.test \
             -e ALGOQUEST_ORIGIN=http://127.0.0.1:18081 \
             -e INTQWQ_DOMAIN=example.test \
             -e INTQWQ_ORIGIN=http://127.0.0.1:18082 \
             -e INTQWQ_WWW_DOMAIN=www.example.test \
-            -e 'NGINX_ENVSUBST_FILTER=^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$' \
+            -e 'NGINX_ENVSUBST_FILTER=^(EDGE_PORT|ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$' \
             -v "$PWD/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             nginx:1.27-alpine nginx -t
       - name: Validate generated systemd unit

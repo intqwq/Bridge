@@ -6,90 +6,38 @@ project_root="$(cd "${script_dir}/../.." && pwd)"
 env_file="${project_root}/.env"
 example_env="${project_root}/.env.example"
 wait_timeout="${BRIDGE_COMPOSE_WAIT_TIMEOUT:-120}"
-allow_unhealthy="${BRIDGE_ALLOW_UNHEALTHY_ORIGINS:-0}"
 
-die() {
-  printf '[Bridge] ERROR: %s\n' "$*" >&2
-  exit 1
-}
-
-get_env_value() {
-  local key="$1"
-  local fallback="$2"
-  local value
+die() { printf '[Bridge] ERROR: %s\n' "$*" >&2; exit 1; }
+get_env() {
+  local key="$1" fallback="$2" value
   value="$(sed -n "s/^${key}=//p" "${env_file}" | tail -n 1)"
   printf '%s' "${value:-${fallback}}"
 }
 
-migrate_legacy_origin() {
-  local key="$1" legacy="$2" replacement="$3"
-  local current
-  current="$(get_env_value "${key}" "")"
-  if [[ "${current}" == "${legacy}" ]]; then
-    sed -i "s|^${key}=.*$|${key}=${replacement}|" "${env_file}"
-    printf '[Bridge] migrated %s from Docker host-gateway to host loopback\n' "${key}"
-  fi
-}
-
 [[ "${wait_timeout}" =~ ^[1-9][0-9]*$ ]] || die "BRIDGE_COMPOSE_WAIT_TIMEOUT must be a positive integer."
-[[ "${allow_unhealthy}" == "0" || "${allow_unhealthy}" == "1" ]] || die "BRIDGE_ALLOW_UNHEALTHY_ORIGINS must be 0 or 1."
 command -v docker >/dev/null || die "Docker is missing."
 command -v curl >/dev/null || die "curl is missing."
 docker info >/dev/null 2>&1 || die "Docker is not reachable."
 docker compose up --help 2>&1 | grep -q -- '--wait' || die "Docker Compose must support --wait."
 
-if [[ ! -f "${env_file}" ]]; then
-  cp "${example_env}" "${env_file}"
-fi
+[[ -f "${env_file}" ]] || cp "${example_env}" "${env_file}"
 chmod 600 "${env_file}"
-
-migrate_legacy_origin ALGOQUEST_ORIGIN \
-  "http://host.docker.internal:18081" "http://127.0.0.1:18081"
-migrate_legacy_origin INTQWQ_ORIGIN \
-  "http://host.docker.internal:18082" "http://127.0.0.1:18082"
 bash "${script_dir}/check-network-boundary.sh"
 
-edge_port="$(get_env_value EDGE_PORT 18080)"
-algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
-intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
-
+edge_port="$(get_env EDGE_PORT 18080)"
 cd "${project_root}"
 compose=(docker compose --env-file "${env_file}")
 if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout "${wait_timeout}"; then
   "${compose[@]}" ps || true
   "${compose[@]}" logs --tail 150 edge || true
-  die "The shared edge did not become healthy within ${wait_timeout}s."
+  die "Bridge edge did not become healthy within ${wait_timeout}s."
 fi
 
-check_origin() {
-  local domain="$1"
-  shift
-  local path
-  for path in "$@"; do
-    curl --noproxy '*' --fail --silent --show-error \
-      --connect-timeout 2 --max-time 8 \
-      -H "Host: ${domain}" \
-      "http://127.0.0.1:${edge_port}${path}" >/dev/null || return 1
-  done
-}
-
-failed=0
-if check_origin "${algoquest_domain}" /healthz / /api/health; then
-  printf '[Bridge] ready <- %s (gateway, web, api)\n' "${algoquest_domain}"
-else
-  printf '[Bridge] unavailable <- %s\n' "${algoquest_domain}" >&2
-  failed=1
-fi
-if check_origin "${intqwq_domain}" /healthz /; then
-  printf '[Bridge] ready <- %s (origin, page)\n' "${intqwq_domain}"
-else
-  printf '[Bridge] unavailable <- %s\n' "${intqwq_domain}" >&2
-  failed=1
-fi
-
-if [[ "${failed}" == "1" && "${allow_unhealthy}" == "0" ]]; then
-  "${compose[@]}" logs --tail 100 edge || true
-  die "One or more origins are unavailable. Deploy both applications first."
-fi
+curl --noproxy '*' --fail --silent --show-error --connect-timeout 2 --max-time 8 \
+  "http://127.0.0.1:${edge_port}/healthz" >/dev/null || die "Bridge edge health check failed."
 
 "${compose[@]}" ps
+printf '[Bridge] edge ready at 127.0.0.1:%s with application-independent routing.\n' "${edge_port}"
+if command -v bridge >/dev/null 2>&1; then
+  bridge list || true
+fi

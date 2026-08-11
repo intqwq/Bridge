@@ -59,8 +59,11 @@ test("clean installer erases old data only after explicit confirmation", async (
   assert.ok(intqwqInstall < bridgeInstall);
 });
 
-test("one tunnel route targets the shared edge for every hostname", async () => {
-  const cloudflare = await read("deploy/pi/configure-cloudflare.sh");
+test("one tunnel route targets the shared edge and retires only legacy local owners", async () => {
+  const [cloudflare, legacy] = await Promise.all([
+    read("deploy/pi/configure-cloudflare.sh"),
+    read("deploy/pi/retire-legacy-networking.sh"),
+  ]);
   const serviceLine = "service: http://127.0.0.1:${edge_port}";
 
   assert.equal(cloudflare.split(serviceLine).length - 1, 3);
@@ -68,7 +71,12 @@ test("one tunnel route targets the shared edge for every hostname", async () => 
   assert.match(cloudflare, /hostname: \$\{intqwq_domain\}/);
   assert.match(cloudflare, /hostname: \$\{intqwq_www_domain\}/);
   assert.match(cloudflare, /Description=Shared intqwq Cloudflare Tunnel/);
+  assert.match(cloudflare, /retire-legacy-networking\.sh/);
   assert.doesNotMatch(cloudflare, /Requires=algoquest\.service/);
+  assert.match(legacy, /algoquest-cloudflared\.service/);
+  assert.match(legacy, /intqwq-cloudflared\.service/);
+  assert.match(legacy, /docker rm -f/);
+  assert.doesNotMatch(legacy, /cloudflared tunnel delete|credentials-file/);
 });
 
 test("Bridge startup is independent from apps but rechecks its local-origin contract", async () => {

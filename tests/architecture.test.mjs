@@ -4,93 +4,66 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("both sites are equal private origins behind one Bridge edge", async () => {
+test("Bridge core is application-neutral and loopback-only", async () => {
   const [compose, nginx, env] = await Promise.all([
     read("compose.yml"),
     read("nginx/default.conf.template"),
     read(".env.example"),
   ]);
+  const core = `${compose}\n${nginx}\n${env}`;
 
-  assert.match(compose, /name: intqwq-bridge/);
   assert.match(compose, /network_mode: host/);
-  assert.doesNotMatch(compose, /host\.docker\.internal|host-gateway/);
-  assert.doesNotMatch(env, /host\.docker\.internal|EDGE_BIND_ADDRESS/);
-  assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/127\.0\.0\.1:18081/);
-  assert.match(env, /INTQWQ_ORIGIN=http:\/\/127\.0\.0\.1:18082/);
+  assert.match(compose, /BRIDGE_STATE_DIR/);
+  assert.match(compose, /\/nginx\/routes:\/etc\/nginx\/routes:ro/);
   assert.match(nginx, /listen 127\.0\.0\.1:\$\{EDGE_PORT\} default_server/);
-  assert.match(nginx, /server_name \$\{ALGOQUEST_DOMAIN\}/);
-  assert.match(nginx, /server_name \$\{INTQWQ_DOMAIN\}/);
-  assert.match(nginx, /proxy_pass \$\{ALGOQUEST_ORIGIN\}/);
-  assert.match(nginx, /proxy_pass \$\{INTQWQ_ORIGIN\}/);
-  assert.match(nginx, /client_max_body_size 8m/);
-  assert.doesNotMatch(compose, /LEGACY_SHARED_ORIGIN/);
-  assert.doesNotMatch(env, /LEGACY_SHARED_ORIGIN/);
-  assert.doesNotMatch(nginx, /legacy|LEGACY_SHARED_ORIGIN/);
-  assert.doesNotMatch(nginx, /\/srv\/intqwq|AlgoQuest\/compose\.yml/);
+  assert.match(nginx, /include \/etc\/nginx\/routes\/\*\.conf/);
+  assert.match(env, /^BRIDGE_STATE_DIR=\/var\/lib\/intqwq-bridge$/m);
+  assert.match(env, /^BRIDGE_TUNNEL_NAME=bridge$/m);
+  assert.doesNotMatch(core, /ALGOQUEST_|INTQWQ_DOMAIN|INTQWQ_ORIGIN|game\.intqwq\.com|www\.intqwq\.com/);
+  assert.doesNotMatch(core, /host\.docker\.internal|host-gateway/);
 });
 
-test("root installer delegates only to Bridge's Pi bootstrap", async () => {
-  const installer = await read("install.sh");
-  assert.match(installer, /deploy\/pi\/bootstrap-ubuntu\.sh/);
-  assert.doesNotMatch(installer, /AlgoQuest|intqwq\.com\/deploy/);
+test("Bridge registrar accepts manifests instead of site-specific settings", async () => {
+  const cli = await read("bin/bridge");
+  assert.match(cli, /bridge register <manifest\.json>/);
+  assert.match(cli, /\.version == 1/);
+  assert.match(cli, /service/);
+  assert.match(cli, /routes/);
+  assert.match(cli, /Origin must be host loopback HTTP/);
+  assert.match(cli, /Hostname .* is already owned by service/);
+  assert.match(cli, /nginx -t/);
+  assert.match(cli, /nginx -s reload/);
+  assert.match(cli, /tunnel route dns --overwrite-dns/);
+  assert.match(cli, /bridge unregister/);
+  assert.doesNotMatch(cli, /AlgoQuest|intqwq\.com|game\.intqwq\.com/);
 });
 
-test("clean installer erases old data only after explicit confirmation", async () => {
-  const installer = await read("deploy/pi/clean-install.sh");
-
-  assert.match(installer, /operator_home.*AlgoQuest/);
-  assert.match(installer, /operator_home.*intqwq\.com/);
-  assert.match(installer, /ERASE-ALGOQUEST-DATABASE/);
-  assert.match(installer, /--plan/);
-  assert.match(installer, /down --remove-orphans --volumes/);
-  assert.match(installer, /docker volume rm/);
-  assert.match(installer, /algoquest-postgres-data/);
-  assert.match(installer, /SELECT count\(\*\) FROM users/);
-  assert.match(installer, /user_count.*== "0"/s);
-  assert.match(installer, /RESEND_API_KEY/);
-  assert.match(installer, /TURNSTILE_SECRET_KEY/);
-  assert.match(installer, /cloudflared tunnel delete -f/);
-  assert.doesNotMatch(installer, /pg_dump|pg_restore/);
-
-  const algoquestInstall = installer.indexOf("Installing a fresh empty AlgoQuest origin");
-  const intqwqInstall = installer.indexOf("Installing a fresh intqwq.com origin");
-  const bridgeInstall = installer.indexOf("Installing the only public edge");
-  assert.ok(algoquestInstall < intqwqInstall);
-  assert.ok(intqwqInstall < bridgeInstall);
-});
-
-test("one tunnel route targets the shared edge and retires only legacy local owners", async () => {
-  const [cloudflare, legacy] = await Promise.all([
-    read("deploy/pi/configure-cloudflare.sh"),
-    read("deploy/pi/retire-legacy-networking.sh"),
-  ]);
-  const serviceLine = "service: http://127.0.0.1:${edge_port}";
-
-  assert.equal(cloudflare.split(serviceLine).length - 1, 3);
-  assert.match(cloudflare, /hostname: \$\{algoquest_domain\}/);
-  assert.match(cloudflare, /hostname: \$\{intqwq_domain\}/);
-  assert.match(cloudflare, /hostname: \$\{intqwq_www_domain\}/);
-  assert.match(cloudflare, /Description=Shared intqwq Cloudflare Tunnel/);
-  assert.match(cloudflare, /retire-legacy-networking\.sh/);
-  assert.doesNotMatch(cloudflare, /Requires=algoquest\.service/);
-  assert.match(legacy, /algoquest-cloudflared\.service/);
-  assert.match(legacy, /intqwq-cloudflared\.service/);
-  assert.match(legacy, /docker rm -f/);
-  assert.doesNotMatch(legacy, /cloudflared tunnel delete|credentials-file/);
-});
-
-test("Bridge startup is independent from apps but rechecks its local-origin contract", async () => {
-  const [systemd, deploy] = await Promise.all([
-    read("deploy/pi/install-systemd.sh"),
+test("Bridge installs before and independently from applications", async () => {
+  const [rootInstall, bootstrap, deploy, systemd] = await Promise.all([
+    read("install.sh"),
+    read("deploy/pi/bootstrap-ubuntu.sh"),
     read("deploy/pi/deploy.sh"),
+    read("deploy/pi/install-systemd.sh"),
   ]);
-  assert.match(systemd, /Description=Shared intqwq edge router/);
-  assert.doesNotMatch(systemd, /Requires=.*algoquest|Requires=.*intqwq-site/);
-  assert.match(systemd, /ExecStartPre=.*check-network-boundary\.sh/);
-  assert.match(systemd, /Restart=on-failure/);
-  assert.match(systemd, /--wait --wait-timeout/);
-  assert.match(deploy, /migrate_legacy_origin ALGOQUEST_ORIGIN/);
-  assert.match(deploy, /migrate_legacy_origin INTQWQ_ORIGIN/);
-  assert.match(deploy, /check-network-boundary\.sh/);
-  assert.match(deploy, /\/api\/health/);
+  assert.match(rootInstall, /deploy\/pi\/bootstrap-ubuntu\.sh/);
+  assert.match(bootstrap, /install-cli\.sh/);
+  assert.match(bootstrap, /configure-cloudflare\.sh/);
+  assert.match(deploy, /edge ready at 127\.0\.0\.1/);
+  assert.doesNotMatch(deploy, /api\/health|ALGOQUEST|INTQWQ/);
+  assert.match(systemd, /Description=Bridge neutral ingress edge/);
+  assert.doesNotMatch(systemd, /Requires=.*algoquest|Requires=.*intqwq-site/i);
+});
+
+test("Cloudflare tunnel is hostname-agnostic", async () => {
+  const cloudflare = await read("deploy/pi/configure-cloudflare.sh");
+  assert.match(cloudflare, /ingress:\n  - service: http:\/\/127\.0\.0\.1:\$\{edge_port\}/);
+  assert.doesNotMatch(cloudflare, /hostname:/);
+  assert.doesNotMatch(cloudflare, /tunnel route dns --overwrite-dns/);
+  assert.match(cloudflare, /BRIDGE_TUNNEL_ID/);
+  assert.match(cloudflare, /No application hostname is configured/);
+});
+
+test("Bridge has no cross-application destructive installer", async () => {
+  const bootstrap = await read("deploy/pi/bootstrap-ubuntu.sh");
+  assert.doesNotMatch(bootstrap, /clean-install|ERASE-|docker volume rm/);
 });

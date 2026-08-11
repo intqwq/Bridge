@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-[[ "${EUID}" -eq 0 ]] || { echo "Run as root: sudo bash deploy/pi/bootstrap-ubuntu.sh" >&2; exit 77; }
+[[ "${EUID}" -eq 0 ]] || { echo "Run as root: sudo bash install.sh" >&2; exit 77; }
 . /etc/os-release
 [[ "${ID:-}" == "ubuntu" || "${ID:-}" == "debian" ]] || { echo "Ubuntu or Debian is required." >&2; exit 1; }
 
@@ -46,10 +46,12 @@ if ! command -v cloudflared >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y cloudflared
 fi
 
-chmod +x "${script_dir}"/*.sh
+chmod +x "${project_root}/bin/bridge" "${script_dir}"/*.sh
+BRIDGE_OPERATOR_USER="${operator_user}" "${script_dir}/install-cli.sh"
 "${script_dir}/deploy.sh"
 "${script_dir}/install-systemd.sh"
 BRIDGE_OPERATOR_USER="${operator_user}" "${script_dir}/configure-cloudflare.sh"
 "${script_dir}/status.sh"
 
-echo "[Bridge] Bootstrap complete. Both public sites now use the Bridge edge."
+echo "[Bridge] Bootstrap complete. Bridge is now ready before any application is installed."
+echo "[Bridge] Applications register themselves with: sudo bridge register <manifest.json>"

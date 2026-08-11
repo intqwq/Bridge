@@ -29,8 +29,7 @@ jobs:
             -e INTQWQ_DOMAIN=example.test \
             -e INTQWQ_ORIGIN=http://127.0.0.1:18082 \
             -e INTQWQ_WWW_DOMAIN=www.example.test \
-            -e LEGACY_SHARED_ORIGIN=http://127.0.0.1:8080 \
-            -e 'NGINX_ENVSUBST_FILTER=^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN|LEGACY_SHARED_ORIGIN)$' \
+            -e 'NGINX_ENVSUBST_FILTER=^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$' \
             -v "$PWD/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             nginx:1.27-alpine nginx -t
       - name: Validate generated systemd unit

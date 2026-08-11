@@ -16,33 +16,39 @@ test("both sites are equal peers behind one Bridge edge", async () => {
   assert.match(compose, /host\.docker\.internal:host-gateway/);
   assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/host\.docker\.internal:18081/);
   assert.match(env, /INTQWQ_ORIGIN=http:\/\/host\.docker\.internal:18082/);
-  assert.match(env, /LEGACY_SHARED_ORIGIN=http:\/\/host\.docker\.internal:8080/);
   assert.match(nginx, /server_name \$\{ALGOQUEST_DOMAIN\}/);
   assert.match(nginx, /server_name \$\{INTQWQ_DOMAIN\}/);
   assert.match(nginx, /proxy_pass \$\{ALGOQUEST_ORIGIN\}/);
   assert.match(nginx, /proxy_pass \$\{INTQWQ_ORIGIN\}/);
   assert.match(nginx, /client_max_body_size 8m/);
-  assert.match(nginx, /error_page 502 504 = @algoquest_legacy/);
-  assert.match(nginx, /error_page 502 504 = @intqwq_legacy/);
+  assert.doesNotMatch(compose, /LEGACY_SHARED_ORIGIN/);
+  assert.doesNotMatch(env, /LEGACY_SHARED_ORIGIN/);
+  assert.doesNotMatch(nginx, /legacy|LEGACY_SHARED_ORIGIN/);
   assert.doesNotMatch(nginx, /\/srv\/intqwq|AlgoQuest\/compose\.yml/);
 });
 
-test("shared-host migration preserves AlgoQuest data and avoids the live port", async () => {
-  const migration = await read("deploy/pi/migrate-from-shared.sh");
+test("clean installer erases old data only after explicit confirmation", async () => {
+  const installer = await read("deploy/pi/clean-install.sh");
 
-  assert.match(migration, /operator_home.*AlgoQuest/);
-  assert.match(migration, /operator_home.*intqwq\.com/);
-  assert.match(migration, /BRIDGE_MIGRATION_EDGE_PORT:-18080/);
-  assert.match(migration, /pg_dump.*-Fc/);
-  assert.match(migration, /pg_restore -l/);
-  assert.match(migration, /POSTGRES_VOLUME/);
-  assert.match(migration, /stop api judge judge-worker/);
-  assert.match(migration, /counts\.before\.csv/);
-  assert.match(migration, /database-mount\.after\.txt/);
-  assert.match(migration, /MIGRATION_ALLOW_LOCAL_BACKUP/);
-  assert.match(migration, /--retire-legacy/);
-  assert.doesNotMatch(migration, /compose[^\n]*down[^\n]*-v/);
-  assert.doesNotMatch(migration, /docker volume rm/);
+  assert.match(installer, /operator_home.*AlgoQuest/);
+  assert.match(installer, /operator_home.*intqwq\.com/);
+  assert.match(installer, /ERASE-ALGOQUEST-DATABASE/);
+  assert.match(installer, /--plan/);
+  assert.match(installer, /down --remove-orphans --volumes/);
+  assert.match(installer, /docker volume rm/);
+  assert.match(installer, /algoquest-postgres-data/);
+  assert.match(installer, /SELECT count\(\*\) FROM users/);
+  assert.match(installer, /user_count.*== "0"/s);
+  assert.match(installer, /RESEND_API_KEY/);
+  assert.match(installer, /TURNSTILE_SECRET_KEY/);
+  assert.match(installer, /cloudflared tunnel delete -f/);
+  assert.doesNotMatch(installer, /pg_dump|pg_restore/);
+
+  const algoquestInstall = installer.indexOf("Installing a fresh empty AlgoQuest origin");
+  const intqwqInstall = installer.indexOf("Installing a fresh intqwq.com origin");
+  const bridgeInstall = installer.indexOf("Installing the only public edge");
+  assert.ok(algoquestInstall < intqwqInstall);
+  assert.ok(intqwqInstall < bridgeInstall);
 });
 
 test("one tunnel route targets the shared edge for every hostname", async () => {

@@ -48,21 +48,6 @@ server {
         proxy_connect_timeout 3s;
         proxy_send_timeout 30s;
         proxy_read_timeout 60s;
-        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
-        proxy_intercept_errors on;
-        error_page 502 504 = @algoquest_legacy;
-    }
-
-    location @algoquest_legacy {
-        proxy_pass ${LEGACY_SHARED_ORIGIN};
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $bridge_client_ip;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
-        proxy_set_header X-Request-ID $request_id;
-        proxy_connect_timeout 1s;
-        proxy_read_timeout 60s;
     }
 }
 
@@ -90,21 +75,6 @@ server {
         proxy_set_header X-Request-ID $request_id;
         proxy_connect_timeout 3s;
         proxy_send_timeout 15s;
-        proxy_read_timeout 30s;
-        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
-        proxy_intercept_errors on;
-        error_page 502 504 = @intqwq_legacy;
-    }
-
-    location @intqwq_legacy {
-        proxy_pass ${LEGACY_SHARED_ORIGIN};
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $bridge_client_ip;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
-        proxy_set_header X-Request-ID $request_id;
-        proxy_connect_timeout 1s;
         proxy_read_timeout 30s;
     }
 }

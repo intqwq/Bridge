@@ -52,4 +52,4 @@ chmod +x "${script_dir}"/*.sh
 BRIDGE_OPERATOR_USER="${operator_user}" "${script_dir}/configure-cloudflare.sh"
 "${script_dir}/status.sh"
 
-echo "[Bridge] Bootstrap complete. Verify both public sites before retiring any legacy tunnel unit."
+echo "[Bridge] Bootstrap complete. Both public sites now use the Bridge edge."

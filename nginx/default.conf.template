@@ -14,7 +14,7 @@ log_format bridge '$bridge_client_ip - $host [$time_local] "$request" '
                   'request_time=$request_time upstream_time=$upstream_response_time';
 
 server {
-    listen 8080 default_server;
+    listen 127.0.0.1:${EDGE_PORT} default_server;
     server_name _;
     server_tokens off;
     access_log /var/log/nginx/access.log bridge;
@@ -31,7 +31,7 @@ server {
 }
 
 server {
-    listen 8080;
+    listen 127.0.0.1:${EDGE_PORT};
     server_name ${ALGOQUEST_DOMAIN};
     server_tokens off;
     client_max_body_size 8m;
@@ -52,7 +52,7 @@ server {
 }
 
 server {
-    listen 8080;
+    listen 127.0.0.1:${EDGE_PORT};
     server_name ${INTQWQ_WWW_DOMAIN};
     server_tokens off;
 
@@ -60,7 +60,7 @@ server {
 }
 
 server {
-    listen 8080;
+    listen 127.0.0.1:${EDGE_PORT};
     server_name ${INTQWQ_DOMAIN};
     server_tokens off;
     access_log /var/log/nginx/access.log bridge;

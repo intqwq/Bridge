@@ -36,7 +36,8 @@ jobs:
       - name: Validate generated systemd unit
         run: |
           cp .env.example .env
-          unit_file="$(mktemp --suffix=.service)"
-          trap 'rm -f .env; sudo rm -f "${unit_file}"' EXIT
+          unit_dir="$(mktemp -d)"
+          unit_file="${unit_dir}/bridge-edge.service"
+          trap 'rm -f .env; sudo rm -rf "${unit_dir}"' EXIT
           sudo env BRIDGE_SYSTEMD_DRY_RUN=1 BRIDGE_SYSTEMD_UNIT_PATH="${unit_file}" \
             bash deploy/pi/install-systemd.sh

@@ -26,7 +26,7 @@ jobs:
           grep -Fq 'listen 127.0.0.1:${EDGE_PORT}' nginx/default.conf.template
           grep -Fq 'include /etc/nginx/routes/*.conf;' nginx/default.conf.template
           ! grep -R -E 'ALGOQUEST_|INTQWQ_DOMAIN|INTQWQ_ORIGIN|game\.intqwq\.com|www\.intqwq\.com' \
-            compose.yml .env.example nginx bin deploy/pi tests
+            compose.yml .env.example nginx bin deploy/pi README.md
       - name: Validate rendered empty Bridge edge
         run: |
           routes="$(mktemp -d)"

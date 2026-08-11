@@ -1,8 +1,8 @@
 # Bridge
 
 Bridge is the **only Internet boundary** for the intqwq services hosted on one
-machine. It owns public hostname routing, the shared Nginx edge, Cloudflare DNS
-routes, and the single Cloudflare Tunnel process for `game.intqwq.com`,
+Linux machine. It owns public hostname routing, the shared Nginx edge, Cloudflare
+DNS routes, and the single Cloudflare Tunnel process for `game.intqwq.com`,
 `intqwq.com`, and `www.intqwq.com`.
 
 AlgoQuest and intqwq.com remain independent application origins. They may own
@@ -30,10 +30,21 @@ The three host ports are deliberately loopback-only:
 | AlgoQuest | `127.0.0.1:18081` | private application origin |
 | intqwq.com | `127.0.0.1:18082` | private application origin |
 
-Bridge's Compose model hard-codes its bind address to `127.0.0.1`; it is not an
-environment option. The application installers similarly enforce their private
-origin bindings. Public exposure therefore has one owner instead of three
-independent knobs.
+### Why Bridge uses host networking
+
+On Linux, a Docker container cannot reach a host service bound only to
+`127.0.0.1` by resolving `host.docker.internal`: that name reaches the Docker
+host-gateway address, not the host loopback interface. Bridge therefore runs its
+small Nginx edge container with `network_mode: host`.
+
+The Nginx template itself binds specifically to `127.0.0.1:${EDGE_PORT}`. This
+gives Bridge direct access to the two real loopback origins while keeping the
+edge unreachable from the LAN or a public host interface. The only supported
+Internet entry is the host `cloudflared` service targeting
+`http://127.0.0.1:18080`.
+
+The application installers similarly enforce their private origin bindings.
+Public exposure therefore has one owner instead of three independent knobs.
 
 The edge stays running when either origin is updated. An unavailable origin
 returns an isolated upstream failure while the other route and the Cloudflare
@@ -93,12 +104,9 @@ EDGE_PORT=18080
 ALGOQUEST_DOMAIN=game.intqwq.com
 INTQWQ_DOMAIN=intqwq.com
 INTQWQ_WWW_DOMAIN=www.intqwq.com
-ALGOQUEST_ORIGIN=http://host.docker.internal:18081
-INTQWQ_ORIGIN=http://host.docker.internal:18082
+ALGOQUEST_ORIGIN=http://127.0.0.1:18081
+INTQWQ_ORIGIN=http://127.0.0.1:18082
 ```
-
-`host.docker.internal` is mapped to Docker's host gateway so Bridge can reach
-the two loopback-bound host origins from inside its edge container.
 
 No tunnel credentials, API tokens, application secrets, Resend keys, or
 Turnstile secrets belong in this repository.

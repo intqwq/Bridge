@@ -37,6 +37,57 @@ jobs:
             -v "$PWD/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
             -v "${routes}:/etc/nginx/routes:ro" \
             nginx:1.27-alpine nginx -t
+      - name: Exercise generic registration lifecycle
+        run: |
+          set -euo pipefail
+          state_dir="$(mktemp -d)"
+          manifest="$(mktemp)"
+          origin_log="$(mktemp)"
+          origin_pid=""
+          cleanup() {
+            [[ -z "${origin_pid}" ]] || kill "${origin_pid}" 2>/dev/null || true
+            docker compose --env-file .env down --remove-orphans 2>/dev/null || true
+            sudo rm -f /usr/local/sbin/bridge /etc/intqwq-bridge/config
+            sudo rmdir /etc/intqwq-bridge 2>/dev/null || true
+            sudo rm -rf "${state_dir}"
+            rm -f .env "${manifest}" "${origin_log}"
+          }
+          trap cleanup EXIT
+
+          cp .env.example .env
+          sed -i "s|^BRIDGE_STATE_DIR=.*$|BRIDGE_STATE_DIR=${state_dir}|" .env
+          sudo env \
+            BRIDGE_OPERATOR_USER="${USER}" \
+            BRIDGE_CLI_PATH=/usr/local/sbin/bridge \
+            bash deploy/pi/install-cli.sh
+
+          docker compose --env-file .env up -d --wait --wait-timeout 60
+          python3 -m http.server 18091 --bind 127.0.0.1 >"${origin_log}" 2>&1 &
+          origin_pid="$!"
+          for _ in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:18091/ >/dev/null && break
+            sleep 0.25
+          done
+          curl -fsS http://127.0.0.1:18091/ >/dev/null
+
+          cat > "${manifest}" <<'JSON'
+          {
+            "version": 1,
+            "service": "fixture",
+            "routes": [{
+              "hostname": "fixture.example.test",
+              "origin": "http://127.0.0.1:18091",
+              "health_path": "/"
+            }]
+          }
+          JSON
+
+          sudo bridge register "${manifest}" --no-dns
+          sudo bridge list | grep -q 'fixture.example.test'
+          curl -fsS -H 'Host: fixture.example.test' http://127.0.0.1:18080/ >/dev/null
+
+          sudo bridge unregister fixture
+          test "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: fixture.example.test' http://127.0.0.1:18080/)" = 404
       - name: Validate generated systemd unit
         run: |
           cp .env.example .env

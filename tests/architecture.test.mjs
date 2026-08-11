@@ -71,14 +71,18 @@ test("one tunnel route targets the shared edge for every hostname", async () => 
   assert.doesNotMatch(cloudflare, /Requires=algoquest\.service/);
 });
 
-test("Bridge startup is independent from either application service", async () => {
+test("Bridge startup is independent from apps but rechecks its local-origin contract", async () => {
   const [systemd, deploy] = await Promise.all([
     read("deploy/pi/install-systemd.sh"),
     read("deploy/pi/deploy.sh"),
   ]);
   assert.match(systemd, /Description=Shared intqwq edge router/);
   assert.doesNotMatch(systemd, /Requires=.*algoquest|Requires=.*intqwq-site/);
+  assert.match(systemd, /ExecStartPre=.*check-network-boundary\.sh/);
   assert.match(systemd, /Restart=on-failure/);
   assert.match(systemd, /--wait --wait-timeout/);
+  assert.match(deploy, /migrate_legacy_origin ALGOQUEST_ORIGIN/);
+  assert.match(deploy, /migrate_legacy_origin INTQWQ_ORIGIN/);
+  assert.match(deploy, /check-network-boundary\.sh/);
   assert.match(deploy, /\/api\/health/);
 });

@@ -10,16 +10,14 @@ unit_path="${BRIDGE_SYSTEMD_UNIT_PATH:-/etc/systemd/system/bridge-edge.service}"
 wait_timeout="${BRIDGE_COMPOSE_WAIT_TIMEOUT:-120}"
 dry_run="${BRIDGE_SYSTEMD_DRY_RUN:-0}"
 
-[[ -f "${env_file}" ]] || { echo "Missing ${env_file}. Run deploy.sh first." >&2; exit 1; }
+[[ -f "${env_file}" ]] || { echo "Missing ${env_file}. Run install-cli.sh and deploy.sh first." >&2; exit 1; }
 [[ "${project_root}" != *[[:space:]\\\"]* ]] || { echo "Bridge path cannot contain whitespace, backslashes, or quotes." >&2; exit 1; }
 [[ "${wait_timeout}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid wait timeout." >&2; exit 1; }
 docker_path="$(command -v docker)"
 
-bash "${script_dir}/check-network-boundary.sh"
-
 cat > "${unit_path}" <<SYSTEMD_UNIT
 [Unit]
-Description=Shared intqwq edge router
+Description=Bridge neutral ingress edge
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target

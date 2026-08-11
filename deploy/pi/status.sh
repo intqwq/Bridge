@@ -12,7 +12,7 @@ get_env_value() {
   printf '%s' "${value:-${fallback}}"
 }
 
-edge_port="$(get_env_value EDGE_PORT 8080)"
+edge_port="$(get_env_value EDGE_PORT 18080)"
 algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
 intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
 

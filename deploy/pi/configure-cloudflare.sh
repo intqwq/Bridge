@@ -25,7 +25,7 @@ command -v jq >/dev/null || die "jq is missing."
 getent passwd "${operator_user}" >/dev/null || die "Unknown operator user: ${operator_user}"
 [[ "${tunnel_name}" =~ ^[A-Za-z0-9_-]+$ ]] || die "BRIDGE_TUNNEL_NAME contains unsupported characters."
 
-edge_port="$(get_env_value EDGE_PORT 8080)"
+edge_port="$(get_env_value EDGE_PORT 18080)"
 algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
 intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
 intqwq_www_domain="$(get_env_value INTQWQ_WWW_DOMAIN www.intqwq.com)"

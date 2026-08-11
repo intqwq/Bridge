@@ -33,7 +33,7 @@ if [[ ! -f "${env_file}" ]]; then
 fi
 chmod 600 "${env_file}"
 
-edge_port="$(get_env_value EDGE_PORT 8080)"
+edge_port="$(get_env_value EDGE_PORT 18080)"
 algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
 intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
 [[ "${edge_port}" =~ ^[0-9]+$ ]] || die "EDGE_PORT must be an integer."

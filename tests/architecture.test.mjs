@@ -12,7 +12,7 @@ test("both sites are equal peers behind one Bridge edge", async () => {
   ]);
 
   assert.match(compose, /name: intqwq-bridge/);
-  assert.match(compose, /127\.0\.0\.1\}:\$\{EDGE_PORT:-8080\}:8080/);
+  assert.match(compose, /127\.0\.0\.1\}:\$\{EDGE_PORT:-18080\}:8080/);
   assert.match(compose, /host\.docker\.internal:host-gateway/);
   assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/host\.docker\.internal:18081/);
   assert.match(env, /INTQWQ_ORIGIN=http:\/\/host\.docker\.internal:18082/);
@@ -25,6 +25,24 @@ test("both sites are equal peers behind one Bridge edge", async () => {
   assert.match(nginx, /error_page 502 504 = @algoquest_legacy/);
   assert.match(nginx, /error_page 502 504 = @intqwq_legacy/);
   assert.doesNotMatch(nginx, /\/srv\/intqwq|AlgoQuest\/compose\.yml/);
+});
+
+test("shared-host migration preserves AlgoQuest data and avoids the live port", async () => {
+  const migration = await read("deploy/pi/migrate-from-shared.sh");
+
+  assert.match(migration, /operator_home.*AlgoQuest/);
+  assert.match(migration, /operator_home.*intqwq\.com/);
+  assert.match(migration, /BRIDGE_MIGRATION_EDGE_PORT:-18080/);
+  assert.match(migration, /pg_dump.*-Fc/);
+  assert.match(migration, /pg_restore -l/);
+  assert.match(migration, /POSTGRES_VOLUME/);
+  assert.match(migration, /stop api judge judge-worker/);
+  assert.match(migration, /counts\.before\.csv/);
+  assert.match(migration, /database-mount\.after\.txt/);
+  assert.match(migration, /MIGRATION_ALLOW_LOCAL_BACKUP/);
+  assert.match(migration, /--retire-legacy/);
+  assert.doesNotMatch(migration, /compose[^\n]*down[^\n]*-v/);
+  assert.doesNotMatch(migration, /docker volume rm/);
 });
 
 test("one tunnel route targets the shared edge for every hostname", async () => {

@@ -84,10 +84,28 @@ jobs:
 
           sudo bridge register "${manifest}" --no-dns
           sudo bridge list | grep -q 'fixture.example.test'
-          curl -fsS -H 'Host: fixture.example.test' http://127.0.0.1:18080/ >/dev/null
+
+          registered=0
+          for _ in $(seq 1 40); do
+            if curl -fsS -H 'Host: fixture.example.test' http://127.0.0.1:18080/ >/dev/null 2>&1; then
+              registered=1
+              break
+            fi
+            sleep 0.1
+          done
+          test "${registered}" = 1
 
           sudo bridge unregister fixture
-          test "$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: fixture.example.test' http://127.0.0.1:18080/)" = 404
+          unregistered=0
+          for _ in $(seq 1 40); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Host: fixture.example.test' http://127.0.0.1:18080/)"
+            if [[ "${status}" == 404 ]]; then
+              unregistered=1
+              break
+            fi
+            sleep 0.1
+          done
+          test "${unregistered}" = 1
       - name: Validate generated systemd unit
         run: |
           cp .env.example .env

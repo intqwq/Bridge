@@ -5,18 +5,13 @@ services:
     image: nginx:1.27-alpine
     environment:
       EDGE_PORT: "${EDGE_PORT:-18080}"
-      ALGOQUEST_DOMAIN: "${ALGOQUEST_DOMAIN:-game.intqwq.com}"
-      ALGOQUEST_ORIGIN: "${ALGOQUEST_ORIGIN:-http://127.0.0.1:18081}"
-      INTQWQ_DOMAIN: "${INTQWQ_DOMAIN:-intqwq.com}"
-      INTQWQ_ORIGIN: "${INTQWQ_ORIGIN:-http://127.0.0.1:18082}"
-      INTQWQ_WWW_DOMAIN: "${INTQWQ_WWW_DOMAIN:-www.intqwq.com}"
-      NGINX_ENVSUBST_FILTER: "^(EDGE_PORT|ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$"
-    # Linux host networking is deliberate: both application origins are bound
-    # to the host loopback interface. Nginx itself also binds only loopback, so
-    # cloudflared remains the sole public ingress.
+      NGINX_ENVSUBST_FILTER: "^(EDGE_PORT)$"
+    # Host networking lets Bridge reach application origins that intentionally
+    # bind only to 127.0.0.1. Nginx itself also binds only to host loopback.
     network_mode: host
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ${BRIDGE_STATE_DIR:-/var/lib/intqwq-bridge}/nginx/routes:/etc/nginx/routes:ro
     read_only: true
     tmpfs:
       - /etc/nginx/conf.d:size=4m

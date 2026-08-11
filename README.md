@@ -1,95 +1,74 @@
 # Bridge
 
-Bridge is the shared public edge for `game.intqwq.com`, `intqwq.com`, and
-`www.intqwq.com`. It owns the only shared Nginx process and the only Cloudflare
-Tunnel service. AlgoQuest and intqwq.com remain independent application origins;
-neither repository mounts files into, restarts, or edits the other one.
+Bridge is the **only Internet boundary** for the intqwq services hosted on one
+machine. It owns public hostname routing, the shared Nginx edge, Cloudflare DNS
+routes, and the single Cloudflare Tunnel process for `game.intqwq.com`,
+`intqwq.com`, and `www.intqwq.com`.
 
-## Architecture
+AlgoQuest and intqwq.com remain independent application origins. They may own
+application-local HTTP servers and internal Docker networking, but they do not
+own public ingress, DNS routing, TLS/tunnel lifecycle, or Cloudflare Tunnel
+services.
+
+## Architecture contract
 
 ```text
 Internet
+  -> Cloudflare
   -> one Cloudflare Tunnel (bridge-cloudflared.service)
-  -> one loopback route (http://127.0.0.1:18080)
-  -> Bridge Nginx (Host-based routing)
+  -> http://127.0.0.1:18080
+  -> Bridge Nginx (Host-based public routing)
        -> game.intqwq.com       -> AlgoQuest origin 127.0.0.1:18081
        -> intqwq.com / www      -> intqwq.com origin 127.0.0.1:18082
 ```
 
-The edge stays running when either origin is updated. An unavailable origin
-returns an isolated `502`; the other site and the Cloudflare connection continue
-to work. There is no legacy or cross-repository fallback. All public ports are
-loopback-bound, so Cloudflare Tunnel is the only Internet-facing path.
+The three host ports are deliberately loopback-only:
 
-## Origin contract
-
-| Origin | Loopback address | Readiness path |
+| Owner | Address | Purpose |
 | --- | --- | --- |
-| AlgoQuest | `http://127.0.0.1:18081` | `/healthz` |
-| intqwq.com | `http://127.0.0.1:18082` | `/healthz` |
-| Bridge edge | `http://127.0.0.1:18080` | `/healthz` |
+| Bridge | `127.0.0.1:18080` | sole tunnel target and public hostname router |
+| AlgoQuest | `127.0.0.1:18081` | private application origin |
+| intqwq.com | `127.0.0.1:18082` | private application origin |
 
-The container uses `host.docker.internal` to reach the two host-bound origins.
-Linux support is supplied by Compose's `host-gateway` mapping.
+Bridge's Compose model hard-codes its bind address to `127.0.0.1`; it is not an
+environment option. The application installers similarly enforce their private
+origin bindings. Public exposure therefore has one owner instead of three
+independent knobs.
 
-## Destructive clean installation
+The edge stays running when either origin is updated. An unavailable origin
+returns an isolated upstream failure while the other route and the Cloudflare
+connection continue to work. No application repository mounts files into,
+restarts, or edits Bridge.
 
-Use the clean installer when the old shared deployment and all AlgoQuest data
-may be discarded. It expects `~/AlgoQuest` and `~/intqwq.com` and runs from the
-Bridge checkout:
+## Raspberry Pi installation
 
-```bash
-sudo bash deploy/pi/clean-install.sh --plan
-sudo bash deploy/pi/clean-install.sh
-```
-
-The script:
-
-- refuses dirty repositories and validates required external secrets first;
-- preserves only Resend, Turnstile, owner, and previous deployment configuration;
-- requires the exact phrase `ERASE-ALGOQUEST-DATABASE`;
-- stops and removes obsolete and current runtime services;
-- permanently deletes the PostgreSQL and Judge volumes without backing them up;
-- removes the old shared static state and systemd units;
-- creates fresh environment files and rotates internal credentials;
-- installs an empty AlgoQuest origin on `18081` and confirms it has zero users;
-- installs intqwq.com on `18082`; and
-- installs Bridge last as the sole edge and Cloudflare tunnel on `18080`, then
-  deletes the obsolete named `algoquest` tunnel if it still exists.
-
-This is intentionally not a migration or recovery tool. Run
-`sudo bash deploy/pi/clean-install.sh --help` before using it.
-
-## Fresh Raspberry Pi deployment
-
-Deploy both origins first, then Bridge:
+Deploy the two application origins first, then Bridge:
 
 ```bash
-# In AlgoQuest
+# 1. AlgoQuest
+cd ~/AlgoQuest
 sudo bash install.sh
 
-# In intqwq.com
-sudo bash deploy/pi/bootstrap-ubuntu.sh
+# 2. intqwq.com
+cd ~/intqwq.com
+sudo bash install.sh
 
-# In Bridge
-sudo bash deploy/pi/bootstrap-ubuntu.sh
+# 3. Bridge, always last
+cd ~/Bridge
+sudo bash install.sh
 ```
 
-AlgoQuest's `uninstall.sh` deliberately preserves Bridge. Removing the AlgoQuest
-origin therefore leaves this shared edge and the intqwq.com origin running; the
-AlgoQuest hostname simply becomes an isolated unavailable upstream until it is
-installed again.
-
-The Bridge bootstrap installs Docker and `cloudflared` when needed, starts the
-edge, verifies both origins through the actual hostname routes, creates or reuses
-a tunnel named `bridge`, routes all public hostnames to the same local edge URL,
-and installs these boot services:
+The first Bridge installation installs Docker and `cloudflared` when needed,
+starts the edge, verifies both origins through the actual hostname routes,
+creates or reuses the named tunnel `bridge`, maps all three public hostnames to
+the one local edge URL, and installs these boot services:
 
 - `bridge-edge.service`
 - `bridge-cloudflared.service`
 
-The first Cloudflare setup opens one browser authorization flow. Bridge routes
-all three public hostnames through its single loopback edge.
+The first Cloudflare setup opens one browser authorization flow. Select the
+`intqwq.com` zone. Tunnel credentials stay in the operator's private
+`~/.cloudflared` directory and the generated `bridge.yml` is mode `0600`.
 
 Useful commands:
 
@@ -100,16 +79,16 @@ sudo systemctl restart bridge-cloudflared
 docker compose --env-file .env logs -f edge
 ```
 
-Set `BRIDGE_ALLOW_UNHEALTHY_ORIGINS=1` only when intentionally installing the
-edge before one of the application origins. Cloudflare configuration is not
-published until the normal readiness checks pass.
+Set `BRIDGE_ALLOW_UNHEALTHY_ORIGINS=1` only when intentionally bringing the edge
+up before one of the origins. The normal bootstrap expects both applications to
+be healthy before Cloudflare routing is configured.
 
 ## Configuration
 
-Copy `.env.example` to `.env`. The defaults match the production contract:
+Copy `.env.example` to `.env` when configuring manually. The normal production
+contract is:
 
 ```dotenv
-EDGE_BIND_ADDRESS=127.0.0.1
 EDGE_PORT=18080
 ALGOQUEST_DOMAIN=game.intqwq.com
 INTQWQ_DOMAIN=intqwq.com
@@ -118,14 +97,34 @@ ALGOQUEST_ORIGIN=http://host.docker.internal:18081
 INTQWQ_ORIGIN=http://host.docker.internal:18082
 ```
 
-No tunnel credentials, API tokens, or application secrets belong in this
-repository. Named-tunnel credentials stay in the operator's private
-`~/.cloudflared` directory and the generated ingress file is mode `0600`.
+`host.docker.internal` is mapped to Docker's host gateway so Bridge can reach
+the two loopback-bound host origins from inside its edge container.
+
+No tunnel credentials, API tokens, application secrets, Resend keys, or
+Turnstile secrets belong in this repository.
+
+## Destructive clean installation
+
+Use the clean installer only when the old deployment and **all AlgoQuest data**
+may be discarded. It expects `~/AlgoQuest` and `~/intqwq.com` and runs from the
+Bridge checkout:
+
+```bash
+sudo bash deploy/pi/clean-install.sh --plan
+sudo bash deploy/pi/clean-install.sh
+```
+
+The script refuses dirty repositories, validates required external secrets,
+requires the exact phrase `ERASE-ALGOQUEST-DATABASE`, deletes the PostgreSQL and
+Judge volumes, removes obsolete pre-Bridge services, installs fresh application
+origins, installs Bridge last, and removes the obsolete remote tunnel named
+`algoquest` if it still exists. This is intentionally not a migration or backup
+tool.
 
 ## Validation
 
 ```bash
 npm test
 docker compose --env-file .env.example config --quiet
-bash -n deploy/pi/*.sh
+bash -n install.sh deploy/pi/*.sh
 ```

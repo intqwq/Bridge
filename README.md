@@ -66,7 +66,7 @@ Deploy both origins first, then Bridge:
 
 ```bash
 # In AlgoQuest
-sudo bash deploy/pi/bootstrap-ubuntu.sh
+sudo bash install.sh
 
 # In intqwq.com
 sudo bash deploy/pi/bootstrap-ubuntu.sh
@@ -74,6 +74,11 @@ sudo bash deploy/pi/bootstrap-ubuntu.sh
 # In Bridge
 sudo bash deploy/pi/bootstrap-ubuntu.sh
 ```
+
+AlgoQuest's `uninstall.sh` deliberately preserves Bridge. Removing the AlgoQuest
+origin therefore leaves this shared edge and the intqwq.com origin running; the
+AlgoQuest hostname simply becomes an isolated unavailable upstream until it is
+installed again.
 
 The Bridge bootstrap installs Docker and `cloudflared` when needed, starts the
 edge, verifies both origins through the actual hostname routes, creates or reuses

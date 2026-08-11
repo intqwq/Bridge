@@ -18,30 +18,33 @@ jobs:
           node-version: 22
       - run: npm test
       - name: Validate shell scripts
-        run: bash -n install.sh deploy/pi/*.sh
-      - name: Validate Compose model
+        run: bash -n install.sh bin/bridge deploy/pi/*.sh
+      - name: Validate neutral core contract
         run: |
           docker compose --env-file .env.example config --quiet
           grep -q 'network_mode: host' compose.yml
-          ! grep -q 'host.docker.internal' compose.yml .env.example
           grep -Fq 'listen 127.0.0.1:${EDGE_PORT}' nginx/default.conf.template
-      - name: Validate rendered Nginx edge
+          grep -Fq 'include /etc/nginx/routes/*.conf;' nginx/default.conf.template
+          ! grep -R -E 'ALGOQUEST_|INTQWQ_DOMAIN|INTQWQ_ORIGIN|game\.intqwq\.com|www\.intqwq\.com' \
+            compose.yml .env.example nginx bin deploy/pi tests
+      - name: Validate rendered empty Bridge edge
         run: |
+          routes="$(mktemp -d)"
+          trap 'rm -rf "${routes}"' EXIT
           docker run --rm \
             -e EDGE_PORT=18080 \
-            -e ALGOQUEST_DOMAIN=game.example.test \
-            -e ALGOQUEST_ORIGIN=http://127.0.0.1:18081 \
-            -e INTQWQ_DOMAIN=example.test \
-            -e INTQWQ_ORIGIN=http://127.0.0.1:18082 \
-            -e INTQWQ_WWW_DOMAIN=www.example.test \
-            -e 'NGINX_ENVSUBST_FILTER=^(EDGE_PORT|ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$' \
+            -e 'NGINX_ENVSUBST_FILTER=^(EDGE_PORT)$' \
             -v "$PWD/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            -v "${routes}:/etc/nginx/routes:ro" \
             nginx:1.27-alpine nginx -t
       - name: Validate generated systemd unit
         run: |
           cp .env.example .env
+          state_dir="$(mktemp -d)"
+          mkdir -p "${state_dir}/registry" "${state_dir}/nginx/routes"
+          sed -i "s|^BRIDGE_STATE_DIR=.*$|BRIDGE_STATE_DIR=${state_dir}|" .env
           unit_dir="$(mktemp -d)"
           unit_file="${unit_dir}/bridge-edge.service"
-          trap 'rm -f .env; sudo rm -rf "${unit_dir}"' EXIT
+          trap 'rm -f .env; sudo rm -rf "${unit_dir}" "${state_dir}"' EXIT
           sudo env BRIDGE_SYSTEMD_DRY_RUN=1 BRIDGE_SYSTEMD_UNIT_PATH="${unit_file}" \
             bash deploy/pi/install-systemd.sh

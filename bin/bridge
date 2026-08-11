@@ -1,0 +1,352 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG_FILE="${BRIDGE_CONFIG_FILE:-/etc/intqwq-bridge/config}"
+
+die() { printf '[Bridge] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[Bridge] %s\n' "$*"; }
+
+[[ -r "${CONFIG_FILE}" ]] || die "Bridge is not installed: missing ${CONFIG_FILE}."
+# This file is created root-owned by install-cli.sh and contains shell-escaped
+# scalar paths/identifiers only.
+# shellcheck disable=SC1090
+source "${CONFIG_FILE}"
+
+: "${BRIDGE_ROOT:?missing BRIDGE_ROOT}"
+: "${BRIDGE_STATE_DIR:?missing BRIDGE_STATE_DIR}"
+: "${BRIDGE_OPERATOR_USER:?missing BRIDGE_OPERATOR_USER}"
+: "${BRIDGE_TUNNEL_NAME:?missing BRIDGE_TUNNEL_NAME}"
+
+REGISTRY_DIR="${BRIDGE_STATE_DIR}/registry"
+ROUTES_DIR="${BRIDGE_STATE_DIR}/nginx/routes"
+ENV_FILE="${BRIDGE_ROOT}/.env"
+
+require_root() {
+  [[ "${EUID}" -eq 0 ]] || die "Run this command with sudo."
+}
+
+require_runtime() {
+  command -v docker >/dev/null || die "docker is missing."
+  command -v jq >/dev/null || die "jq is missing."
+  [[ -f "${ENV_FILE}" ]] || die "Missing ${ENV_FILE}."
+  docker info >/dev/null 2>&1 || die "Docker is not reachable."
+  docker compose --project-directory "${BRIDGE_ROOT}" --env-file "${ENV_FILE}" ps -q edge | grep -q . || \
+    die "bridge-edge is not running."
+}
+
+valid_service_id() {
+  [[ "$1" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]
+}
+
+valid_hostname() {
+  local host="$1" label
+  local -a labels
+  [[ "${host}" == "${host,,}" ]] || return 1
+  (( ${#host} >= 3 && ${#host} <= 253 )) || return 1
+  [[ "${host}" == *.* && "${host}" != *..* ]] || return 1
+  IFS='.' read -r -a labels <<< "${host}"
+  (( ${#labels[@]} >= 2 )) || return 1
+  for label in "${labels[@]}"; do
+    (( ${#label} >= 1 && ${#label} <= 63 )) || return 1
+    [[ "${label}" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+  done
+}
+
+valid_origin() {
+  local origin="$1" port
+  [[ "${origin}" =~ ^http://127\.0\.0\.1:([0-9]{1,5})$ ]] || return 1
+  port="${BASH_REMATCH[1]}"
+  (( port >= 1 && port <= 65535 ))
+}
+
+validate_manifest() {
+  local manifest="$1" service route host origin redirect health body timeout
+  local host_list duplicate
+
+  [[ -f "${manifest}" ]] || die "Manifest not found: ${manifest}"
+  jq -e '
+    .version == 1 and
+    (.service | type == "string") and
+    (.routes | type == "array" and length > 0) and
+    all(.routes[];
+      (type == "object") and
+      (.hostname | type == "string") and
+      (((has("origin") and (.origin | type == "string")) or
+        (has("redirect_to") and (.redirect_to | type == "string"))) and
+       ((has("origin") and has("redirect_to")) | not))
+    )
+  ' "${manifest}" >/dev/null || die "Manifest does not match Bridge schema version 1."
+
+  service="$(jq -r '.service' "${manifest}")"
+  valid_service_id "${service}" || die "Invalid service id: ${service}"
+
+  host_list="$(mktemp)"
+  trap 'rm -f "${host_list:-}"' RETURN
+  while IFS= read -r route; do
+    host="$(jq -r '.hostname' <<< "${route}")"
+    origin="$(jq -r '.origin // empty' <<< "${route}")"
+    redirect="$(jq -r '.redirect_to // empty' <<< "${route}")"
+    health="$(jq -r '.health_path // empty' <<< "${route}")"
+    body="$(jq -r '.client_max_body_size // empty' <<< "${route}")"
+    timeout="$(jq -r '.proxy_read_timeout_seconds // empty' <<< "${route}")"
+
+    valid_hostname "${host}" || die "Invalid hostname: ${host}"
+    printf '%s\n' "${host}" >> "${host_list}"
+    if [[ -n "${origin}" ]]; then
+      valid_origin "${origin}" || die "Origin must be host loopback HTTP (http://127.0.0.1:PORT): ${origin}"
+    else
+      valid_hostname "${redirect}" || die "Invalid redirect target: ${redirect}"
+    fi
+    if [[ -n "${health}" ]]; then
+      [[ "${health}" == /* && "${health}" != *[[:space:]]* ]] || die "Invalid health_path for ${host}."
+    fi
+    if [[ -n "${body}" ]]; then
+      [[ "${body}" =~ ^[1-9][0-9]*[kKmMgG]?$ ]] || die "Invalid client_max_body_size for ${host}."
+    fi
+    if [[ -n "${timeout}" ]]; then
+      [[ "${timeout}" =~ ^[1-9][0-9]*$ ]] || die "Invalid proxy_read_timeout_seconds for ${host}."
+      (( timeout <= 3600 )) || die "proxy_read_timeout_seconds is too large for ${host}."
+    fi
+  done < <(jq -c '.routes[]' "${manifest}")
+
+  duplicate="$(sort "${host_list}" | uniq -d | head -n 1)"
+  [[ -z "${duplicate}" ]] || die "Hostname is duplicated inside manifest: ${duplicate}"
+}
+
+check_registry_conflicts() {
+  local manifest="$1" service existing existing_service host
+  service="$(jq -r '.service' "${manifest}")"
+  shopt -s nullglob
+  for existing in "${REGISTRY_DIR}"/*.json; do
+    existing_service="$(jq -r '.service' "${existing}")"
+    [[ "${existing_service}" == "${service}" ]] && continue
+    while IFS= read -r host; do
+      if jq -e --arg host "${host}" '.routes[] | select(.hostname == $host)' "${existing}" >/dev/null; then
+        die "Hostname ${host} is already owned by service ${existing_service}."
+      fi
+    done < <(jq -r '.routes[].hostname' "${manifest}")
+  done
+  shopt -u nullglob
+}
+
+check_origin_health() {
+  local manifest="$1" route origin health host
+  command -v curl >/dev/null || die "curl is missing."
+  while IFS= read -r route; do
+    origin="$(jq -r '.origin // empty' <<< "${route}")"
+    health="$(jq -r '.health_path // empty' <<< "${route}")"
+    host="$(jq -r '.hostname' <<< "${route}")"
+    [[ -n "${origin}" && -n "${health}" ]] || continue
+    curl --noproxy '*' --fail --silent --show-error --connect-timeout 2 --max-time 10 \
+      "${origin}${health}" >/dev/null || die "Origin health check failed for ${host}: ${origin}${health}"
+  done < <(jq -c '.routes[]' "${manifest}")
+}
+
+render_manifest() {
+  local manifest="$1" output="$2" route host origin redirect body timeout
+  : > "${output}"
+  printf '# Generated by Bridge. Do not edit directly.\n\n' >> "${output}"
+  while IFS= read -r route; do
+    host="$(jq -r '.hostname' <<< "${route}")"
+    origin="$(jq -r '.origin // empty' <<< "${route}")"
+    redirect="$(jq -r '.redirect_to // empty' <<< "${route}")"
+    body="$(jq -r '.client_max_body_size // empty' <<< "${route}")"
+    timeout="$(jq -r '.proxy_read_timeout_seconds // 60' <<< "${route}")"
+
+    if [[ -n "${origin}" ]]; then
+      cat >> "${output}" <<ROUTE
+server {
+    listen 127.0.0.1:\${EDGE_PORT};
+    server_name ${host};
+    server_tokens off;
+    access_log /var/log/nginx/access.log bridge;
+ROUTE
+      [[ -z "${body}" ]] || printf '    client_max_body_size %s;\n' "${body}" >> "${output}"
+      cat >> "${output}" <<ROUTE
+
+    location / {
+        proxy_pass ${origin};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$bridge_client_ip;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$bridge_forwarded_proto;
+        proxy_set_header X-Request-ID \$request_id;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$bridge_connection_upgrade;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout ${timeout}s;
+    }
+}
+
+ROUTE
+    else
+      cat >> "${output}" <<ROUTE
+server {
+    listen 127.0.0.1:\${EDGE_PORT};
+    server_name ${host};
+    server_tokens off;
+    return 308 https://${redirect}\$request_uri;
+}
+
+ROUTE
+    fi
+  done < <(jq -c '.routes[]' "${manifest}")
+}
+
+reload_edge() {
+  local -a compose=(docker compose --project-directory "${BRIDGE_ROOT}" --env-file "${ENV_FILE}")
+  "${compose[@]}" exec -T edge nginx -t >/dev/null
+  "${compose[@]}" exec -T edge nginx -s reload >/dev/null
+}
+
+as_operator() {
+  local home
+  home="$(getent passwd "${BRIDGE_OPERATOR_USER}" | cut -d: -f6)"
+  [[ -n "${home}" ]] || die "Unknown Bridge operator: ${BRIDGE_OPERATOR_USER}"
+  if [[ "${BRIDGE_OPERATOR_USER}" == "root" ]]; then
+    HOME="${home}" "$@"
+  else
+    sudo -u "${BRIDGE_OPERATOR_USER}" -H "$@"
+  fi
+}
+
+sync_dns() {
+  local manifest="$1" host tunnel="${BRIDGE_TUNNEL_ID:-${BRIDGE_TUNNEL_NAME}}" failed=0
+  command -v cloudflared >/dev/null || die "cloudflared is missing."
+  while IFS= read -r host; do
+    if as_operator cloudflared tunnel route dns --overwrite-dns "${tunnel}" "${host}"; then
+      log "DNS route synced: ${host} -> tunnel ${tunnel}"
+    else
+      printf '[Bridge] ERROR: DNS route failed for %s. Local registration remains active; rerun registration after fixing Cloudflare access.\n' "${host}" >&2
+      failed=1
+    fi
+  done < <(jq -r '.routes[].hostname' "${manifest}")
+  return "${failed}"
+}
+
+register_service() {
+  local manifest="$1" sync="${2:-1}" service normalized rendered backup_dir registry_file route_file
+  require_root
+  require_runtime
+  install -d -m 0755 "${REGISTRY_DIR}" "${ROUTES_DIR}"
+  validate_manifest "${manifest}"
+  check_registry_conflicts "${manifest}"
+  check_origin_health "${manifest}"
+
+  service="$(jq -r '.service' "${manifest}")"
+  backup_dir="$(mktemp -d)"
+  normalized="${backup_dir}/manifest.json"
+  rendered="${backup_dir}/route.conf"
+  registry_file="${REGISTRY_DIR}/${service}.json"
+  route_file="${ROUTES_DIR}/${service}.conf"
+  jq -S . "${manifest}" > "${normalized}"
+  render_manifest "${normalized}" "${rendered}"
+  [[ ! -f "${registry_file}" ]] || cp "${registry_file}" "${backup_dir}/old.json"
+  [[ ! -f "${route_file}" ]] || cp "${route_file}" "${backup_dir}/old.conf"
+
+  install -m 0644 "${normalized}" "${registry_file}"
+  install -m 0644 "${rendered}" "${route_file}"
+  if ! reload_edge; then
+    [[ ! -f "${backup_dir}/old.json" ]] || install -m 0644 "${backup_dir}/old.json" "${registry_file}"
+    [[ -f "${backup_dir}/old.json" ]] || rm -f "${registry_file}"
+    [[ ! -f "${backup_dir}/old.conf" ]] || install -m 0644 "${backup_dir}/old.conf" "${route_file}"
+    [[ -f "${backup_dir}/old.conf" ]] || rm -f "${route_file}"
+    reload_edge || true
+    rm -rf "${backup_dir}"
+    die "Nginx rejected the generated registration for ${service}."
+  fi
+  rm -rf "${backup_dir}"
+  log "registered service ${service}"
+  [[ "${sync}" == "0" ]] || sync_dns "${registry_file}"
+}
+
+unregister_service() {
+  local service="$1" registry_file route_file backup_dir
+  require_root
+  require_runtime
+  valid_service_id "${service}" || die "Invalid service id: ${service}"
+  registry_file="${REGISTRY_DIR}/${service}.json"
+  route_file="${ROUTES_DIR}/${service}.conf"
+  [[ -f "${registry_file}" || -f "${route_file}" ]] || die "Service is not registered: ${service}"
+  backup_dir="$(mktemp -d)"
+  [[ ! -f "${registry_file}" ]] || cp "${registry_file}" "${backup_dir}/old.json"
+  [[ ! -f "${route_file}" ]] || cp "${route_file}" "${backup_dir}/old.conf"
+  rm -f "${registry_file}" "${route_file}"
+  if ! reload_edge; then
+    [[ ! -f "${backup_dir}/old.json" ]] || install -m 0644 "${backup_dir}/old.json" "${registry_file}"
+    [[ ! -f "${backup_dir}/old.conf" ]] || install -m 0644 "${backup_dir}/old.conf" "${route_file}"
+    reload_edge || true
+    rm -rf "${backup_dir}"
+    die "Could not reload Bridge after unregistering ${service}."
+  fi
+  rm -rf "${backup_dir}"
+  log "unregistered service ${service}; Cloudflare DNS is intentionally preserved and will receive Bridge 404 until removed or reused."
+}
+
+list_services() {
+  local file
+  printf '%-24s %-36s %s\n' SERVICE HOSTNAME TARGET
+  shopt -s nullglob
+  for file in "${REGISTRY_DIR}"/*.json; do
+    jq -r '. as $m | .routes[] | [$m.service, .hostname, (.origin // ("redirect:https://" + .redirect_to))] | @tsv' "${file}" |
+      while IFS=$'\t' read -r service host target; do
+        printf '%-24s %-36s %s\n' "${service}" "${host}" "${target}"
+      done
+  done
+  shopt -u nullglob
+}
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  bridge register <manifest.json> [--no-dns]
+  bridge unregister <service-id>
+  bridge list
+
+Manifest schema version 1:
+{
+  "version": 1,
+  "service": "my-service",
+  "routes": [
+    {
+      "hostname": "app.example.com",
+      "origin": "http://127.0.0.1:18090",
+      "health_path": "/healthz",
+      "client_max_body_size": "8m",
+      "proxy_read_timeout_seconds": 60
+    },
+    {
+      "hostname": "www.example.com",
+      "redirect_to": "example.com"
+    }
+  ]
+}
+USAGE
+}
+
+case "${1:-}" in
+  register)
+    [[ $# -ge 2 && $# -le 3 ]] || { usage >&2; exit 64; }
+    sync=1
+    [[ "${3:-}" != "--no-dns" ]] || sync=0
+    [[ $# -lt 3 || "${3}" == "--no-dns" ]] || { usage >&2; exit 64; }
+    register_service "$2" "${sync}"
+    ;;
+  unregister)
+    [[ $# -eq 2 ]] || { usage >&2; exit 64; }
+    unregister_service "$2"
+    ;;
+  list)
+    [[ $# -eq 1 ]] || { usage >&2; exit 64; }
+    list_services
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac

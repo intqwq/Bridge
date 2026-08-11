@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("both sites are equal peers behind one Bridge edge", async () => {
+test("both sites are equal private origins behind one Bridge edge", async () => {
   const [compose, nginx, env] = await Promise.all([
     read("compose.yml"),
     read("nginx/default.conf.template"),
@@ -12,7 +12,9 @@ test("both sites are equal peers behind one Bridge edge", async () => {
   ]);
 
   assert.match(compose, /name: intqwq-bridge/);
-  assert.match(compose, /127\.0\.0\.1\}:\$\{EDGE_PORT:-18080\}:8080/);
+  assert.match(compose, /127\.0\.0\.1:\$\{EDGE_PORT:-18080\}:8080/);
+  assert.doesNotMatch(compose, /EDGE_BIND_ADDRESS/);
+  assert.doesNotMatch(env, /EDGE_BIND_ADDRESS/);
   assert.match(compose, /host\.docker\.internal:host-gateway/);
   assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/host\.docker\.internal:18081/);
   assert.match(env, /INTQWQ_ORIGIN=http:\/\/host\.docker\.internal:18082/);
@@ -25,6 +27,12 @@ test("both sites are equal peers behind one Bridge edge", async () => {
   assert.doesNotMatch(env, /LEGACY_SHARED_ORIGIN/);
   assert.doesNotMatch(nginx, /legacy|LEGACY_SHARED_ORIGIN/);
   assert.doesNotMatch(nginx, /\/srv\/intqwq|AlgoQuest\/compose\.yml/);
+});
+
+test("root installer delegates only to Bridge's Pi bootstrap", async () => {
+  const installer = await read("install.sh");
+  assert.match(installer, /deploy\/pi\/bootstrap-ubuntu\.sh/);
+  assert.doesNotMatch(installer, /AlgoQuest|intqwq\.com\/deploy/);
 });
 
 test("clean installer erases old data only after explicit confirmation", async () => {

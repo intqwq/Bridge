@@ -7,20 +7,23 @@ set -Eeuo pipefail
 }
 
 # Bridge owns local public networking after bridge-cloudflared.service is healthy.
-# Retire known pre-Bridge local tunnel processes, but do not delete remote
-# Cloudflare tunnels or credential files here.
+# These exact units/containers are known pre-Bridge public-network owners. The
+# current AlgoQuest and intqwq-site origins are already verified before this
+# script runs. Remote Cloudflare tunnels and credential files are not deleted.
 legacy_units=(
   algoquest-cloudflared.service
   intqwq-cloudflared.service
+  intqwq-shared.service
 )
 
 for unit in "${legacy_units[@]}"; do
   if systemctl list-unit-files "${unit}" --no-legend 2>/dev/null | grep -q "${unit}"; then
     systemctl disable --now "${unit}" 2>/dev/null || true
     rm -f -- "/etc/systemd/system/${unit}"
-    printf '[Bridge] retired legacy local tunnel unit: %s\n' "${unit}"
+    printf '[Bridge] retired legacy public-network unit: %s\n' "${unit}"
   fi
 done
+rm -f -- /etc/default/intqwq-shared
 
 for container in algoquest-cloudflared intqwq-cloudflared; do
   if docker container inspect "${container}" >/dev/null 2>&1; then

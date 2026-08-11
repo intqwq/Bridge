@@ -12,12 +12,12 @@ test("both sites are equal private origins behind one Bridge edge", async () => 
   ]);
 
   assert.match(compose, /name: intqwq-bridge/);
-  assert.match(compose, /127\.0\.0\.1:\$\{EDGE_PORT:-18080\}:8080/);
-  assert.doesNotMatch(compose, /EDGE_BIND_ADDRESS/);
-  assert.doesNotMatch(env, /EDGE_BIND_ADDRESS/);
-  assert.match(compose, /host\.docker\.internal:host-gateway/);
-  assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/host\.docker\.internal:18081/);
-  assert.match(env, /INTQWQ_ORIGIN=http:\/\/host\.docker\.internal:18082/);
+  assert.match(compose, /network_mode: host/);
+  assert.doesNotMatch(compose, /host\.docker\.internal|host-gateway/);
+  assert.doesNotMatch(env, /host\.docker\.internal|EDGE_BIND_ADDRESS/);
+  assert.match(env, /ALGOQUEST_ORIGIN=http:\/\/127\.0\.0\.1:18081/);
+  assert.match(env, /INTQWQ_ORIGIN=http:\/\/127\.0\.0\.1:18082/);
+  assert.match(nginx, /listen 127\.0\.0\.1:\$\{EDGE_PORT\} default_server/);
   assert.match(nginx, /server_name \$\{ALGOQUEST_DOMAIN\}/);
   assert.match(nginx, /server_name \$\{INTQWQ_DOMAIN\}/);
   assert.match(nginx, /proxy_pass \$\{ALGOQUEST_ORIGIN\}/);

@@ -12,8 +12,10 @@ services:
       NGINX_ENVSUBST_FILTER: "^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # cloudflared is the only public ingress. Do not make the edge reachable
+    # from the LAN or a host public interface.
     ports:
-      - "${EDGE_BIND_ADDRESS:-127.0.0.1}:${EDGE_PORT:-18080}:8080"
+      - "127.0.0.1:${EDGE_PORT:-18080}:8080"
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     read_only: true

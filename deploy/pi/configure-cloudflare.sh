@@ -6,12 +6,11 @@ set -Eeuo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_root="$(cd "${script_dir}/../.." && pwd)"
 env_file="${project_root}/.env"
-tunnel_name="${BRIDGE_TUNNEL_NAME:-bridge}"
 operator_user="${BRIDGE_OPERATOR_USER:-${SUDO_USER:-root}}"
 tmp_config=""
 
 die() { printf '[Bridge] ERROR: %s\n' "$*" >&2; exit 1; }
-get_env_value() {
+get_env() {
   local key="$1" fallback="$2" value
   value="$(sed -n "s/^${key}=//p" "${env_file}" | tail -n 1)"
   printf '%s' "${value:-${fallback}}"
@@ -23,16 +22,11 @@ trap cleanup EXIT
 command -v cloudflared >/dev/null || die "cloudflared is missing."
 command -v jq >/dev/null || die "jq is missing."
 getent passwd "${operator_user}" >/dev/null || die "Unknown operator user: ${operator_user}"
-[[ "${tunnel_name}" =~ ^[A-Za-z0-9_-]+$ ]] || die "BRIDGE_TUNNEL_NAME contains unsupported characters."
 
-edge_port="$(get_env_value EDGE_PORT 18080)"
-algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
-intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
-intqwq_www_domain="$(get_env_value INTQWQ_WWW_DOMAIN www.intqwq.com)"
-for domain in "${algoquest_domain}" "${intqwq_domain}" "${intqwq_www_domain}"; do
-  [[ "${domain}" =~ ^[A-Za-z0-9.-]+$ ]] || die "Invalid hostname: ${domain}"
-done
-[[ "${edge_port}" =~ ^[0-9]+$ ]] || die "EDGE_PORT must be an integer."
+edge_port="$(get_env EDGE_PORT 18080)"
+tunnel_name="$(get_env BRIDGE_TUNNEL_NAME bridge)"
+[[ "${edge_port}" =~ ^[0-9]+$ ]] && (( edge_port >= 1 && edge_port <= 65535 )) || die "Invalid EDGE_PORT."
+[[ "${tunnel_name}" =~ ^[A-Za-z0-9_-]+$ ]] || die "Invalid BRIDGE_TUNNEL_NAME."
 
 operator_home="$(getent passwd "${operator_user}" | cut -d: -f6)"
 operator_group="$(id -gn "${operator_user}")"
@@ -43,7 +37,7 @@ as_operator() {
 cloudflare_dir="${operator_home}/.cloudflared"
 install -d -m 0700 -o "${operator_user}" -g "${operator_group}" "${cloudflare_dir}"
 if [[ ! -f "${cloudflare_dir}/cert.pem" ]]; then
-  echo "[Bridge] Authorize Cloudflare and select the intqwq.com zone."
+  echo "[Bridge] Authorize the Cloudflare account containing hostnames that applications will register."
   as_operator cloudflared tunnel login
 fi
 
@@ -61,19 +55,16 @@ fi
 credentials_file="${cloudflare_dir}/${tunnel_id}.json"
 [[ -f "${credentials_file}" ]] || die "Missing tunnel credentials: ${credentials_file}"
 
+# The tunnel is intentionally hostname-agnostic. DNS hostnames are attached by
+# `bridge register`; every tunneled request reaches the local Bridge edge, whose
+# registry decides whether the Host header is registered or receives 404.
 config_file="${cloudflare_dir}/bridge.yml"
 tmp_config="$(mktemp)"
 cat > "${tmp_config}" <<CLOUDFLARED_CONFIG
 tunnel: ${tunnel_id}
 credentials-file: ${credentials_file}
 ingress:
-  - hostname: ${algoquest_domain}
-    service: http://127.0.0.1:${edge_port}
-  - hostname: ${intqwq_domain}
-    service: http://127.0.0.1:${edge_port}
-  - hostname: ${intqwq_www_domain}
-    service: http://127.0.0.1:${edge_port}
-  - service: http_status:404
+  - service: http://127.0.0.1:${edge_port}
 CLOUDFLARED_CONFIG
 install -m 0600 -o "${operator_user}" -g "${operator_group}" "${tmp_config}" "${config_file}"
 rm -f "${tmp_config}"
@@ -83,7 +74,7 @@ as_operator cloudflared tunnel --config "${config_file}" ingress validate
 cloudflared_path="$(command -v cloudflared)"
 cat > /etc/systemd/system/bridge-cloudflared.service <<SYSTEMD_UNIT
 [Unit]
-Description=Shared intqwq Cloudflare Tunnel
+Description=Bridge Cloudflare Tunnel
 Requires=bridge-edge.service
 After=network-online.target bridge-edge.service
 Wants=network-online.target
@@ -109,9 +100,16 @@ systemctl daemon-reload
 systemctl enable --now bridge-cloudflared.service
 systemctl is-active --quiet bridge-cloudflared.service || die "bridge-cloudflared.service did not start."
 
-for domain in "${algoquest_domain}" "${intqwq_domain}" "${intqwq_www_domain}"; do
-  as_operator cloudflared tunnel route dns --overwrite-dns "${tunnel_id}" "${domain}"
-done
+# Record the resolved UUID for future registration calls without teaching Bridge
+# anything about the applications that will use it.
+bridge_config=/etc/intqwq-bridge/config
+if [[ -f "${bridge_config}" ]]; then
+  tmp_bridge="$(mktemp)"
+  grep -v '^BRIDGE_TUNNEL_ID=' "${bridge_config}" > "${tmp_bridge}" || true
+  printf 'BRIDGE_TUNNEL_ID=%q\n' "${tunnel_id}" >> "${tmp_bridge}"
+  install -m 0644 "${tmp_bridge}" "${bridge_config}"
+  rm -f "${tmp_bridge}"
+fi
 
-bash "${script_dir}/retire-legacy-networking.sh"
-echo "[Bridge] Tunnel ${tunnel_id} routes every hostname through http://127.0.0.1:${edge_port}."
+echo "[Bridge] Tunnel ${tunnel_id} forwards registered hostnames to http://127.0.0.1:${edge_port}."
+echo "[Bridge] No application hostname is configured until an application runs: sudo bridge register <manifest.json>"

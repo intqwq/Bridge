@@ -15,6 +15,8 @@ dry_run="${BRIDGE_SYSTEMD_DRY_RUN:-0}"
 [[ "${wait_timeout}" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid wait timeout." >&2; exit 1; }
 docker_path="$(command -v docker)"
 
+bash "${script_dir}/check-network-boundary.sh"
+
 cat > "${unit_path}" <<SYSTEMD_UNIT
 [Unit]
 Description=Shared intqwq edge router
@@ -26,6 +28,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${project_root}
+ExecStartPre=/bin/bash ${project_root}/deploy/pi/check-network-boundary.sh
 ExecStart=${docker_path} compose --env-file ${env_file} up -d --remove-orphans --wait --wait-timeout ${wait_timeout}
 ExecStop=${docker_path} compose --env-file ${env_file} down --remove-orphans
 TimeoutStartSec=$((wait_timeout + 30))

@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Validate shell scripts
+        run: bash -n deploy/pi/*.sh
+      - name: Validate Compose model
+        run: docker compose --env-file .env.example config --quiet
+      - name: Validate rendered Nginx edge
+        run: |
+          docker run --rm \
+            -e ALGOQUEST_DOMAIN=game.example.test \
+            -e ALGOQUEST_ORIGIN=http://127.0.0.1:18081 \
+            -e INTQWQ_DOMAIN=example.test \
+            -e INTQWQ_ORIGIN=http://127.0.0.1:18082 \
+            -e INTQWQ_WWW_DOMAIN=www.example.test \
+            -e LEGACY_SHARED_ORIGIN=http://127.0.0.1:8080 \
+            -e 'NGINX_ENVSUBST_FILTER=^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN|LEGACY_SHARED_ORIGIN)$' \
+            -v "$PWD/nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro" \
+            nginx:1.27-alpine nginx -t
+      - name: Validate generated systemd unit
+        run: |
+          cp .env.example .env
+          unit_file="$(mktemp --suffix=.service)"
+          trap 'rm -f .env; sudo rm -f "${unit_file}"' EXIT
+          sudo env BRIDGE_SYSTEMD_DRY_RUN=1 BRIDGE_SYSTEMD_UNIT_PATH="${unit_file}" \
+            bash deploy/pi/install-systemd.sh

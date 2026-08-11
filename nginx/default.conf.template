@@ -1,0 +1,110 @@
+map $http_x_forwarded_proto $bridge_forwarded_proto {
+    default $scheme;
+    https https;
+}
+
+map $http_cf_connecting_ip $bridge_client_ip {
+    default $http_cf_connecting_ip;
+    "" $remote_addr;
+}
+
+log_format bridge '$bridge_client_ip - $host [$time_local] "$request" '
+                  '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
+                  'request_id=$request_id upstream=$upstream_addr upstream_status=$upstream_status '
+                  'request_time=$request_time upstream_time=$upstream_response_time';
+
+server {
+    listen 8080 default_server;
+    server_name _;
+    server_tokens off;
+    access_log /var/log/nginx/access.log bridge;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "bridge ok\n";
+    }
+
+    location / {
+        return 404;
+    }
+}
+
+server {
+    listen 8080;
+    server_name ${ALGOQUEST_DOMAIN};
+    server_tokens off;
+    client_max_body_size 8m;
+    access_log /var/log/nginx/access.log bridge;
+
+    location / {
+        proxy_pass ${ALGOQUEST_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $bridge_client_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 60s;
+        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+        proxy_intercept_errors on;
+        error_page 502 504 = @algoquest_legacy;
+    }
+
+    location @algoquest_legacy {
+        proxy_pass ${LEGACY_SHARED_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $bridge_client_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_connect_timeout 1s;
+        proxy_read_timeout 60s;
+    }
+}
+
+server {
+    listen 8080;
+    server_name ${INTQWQ_WWW_DOMAIN};
+    server_tokens off;
+
+    return 308 https://${INTQWQ_DOMAIN}$request_uri;
+}
+
+server {
+    listen 8080;
+    server_name ${INTQWQ_DOMAIN};
+    server_tokens off;
+    access_log /var/log/nginx/access.log bridge;
+
+    location / {
+        proxy_pass ${INTQWQ_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $bridge_client_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_connect_timeout 3s;
+        proxy_send_timeout 15s;
+        proxy_read_timeout 30s;
+        proxy_next_upstream error timeout invalid_header http_502 http_503 http_504;
+        proxy_intercept_errors on;
+        error_page 502 504 = @intqwq_legacy;
+    }
+
+    location @intqwq_legacy {
+        proxy_pass ${LEGACY_SHARED_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $bridge_client_ip;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $bridge_forwarded_proto;
+        proxy_set_header X-Request-ID $request_id;
+        proxy_connect_timeout 1s;
+        proxy_read_timeout 30s;
+    }
+}

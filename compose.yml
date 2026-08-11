@@ -1,0 +1,35 @@
+name: intqwq-bridge
+
+services:
+  edge:
+    image: nginx:1.27-alpine
+    environment:
+      ALGOQUEST_DOMAIN: "${ALGOQUEST_DOMAIN:-game.intqwq.com}"
+      ALGOQUEST_ORIGIN: "${ALGOQUEST_ORIGIN:-http://host.docker.internal:18081}"
+      INTQWQ_DOMAIN: "${INTQWQ_DOMAIN:-intqwq.com}"
+      INTQWQ_ORIGIN: "${INTQWQ_ORIGIN:-http://host.docker.internal:18082}"
+      INTQWQ_WWW_DOMAIN: "${INTQWQ_WWW_DOMAIN:-www.intqwq.com}"
+      LEGACY_SHARED_ORIGIN: "${LEGACY_SHARED_ORIGIN:-http://host.docker.internal:8080}"
+      NGINX_ENVSUBST_FILTER: "^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN|LEGACY_SHARED_ORIGIN)$"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${EDGE_BIND_ADDRESS:-127.0.0.1}:${EDGE_PORT:-8080}:8080"
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d:size=4m
+      - /var/cache/nginx:size=16m
+      - /var/run:size=4m
+      - /tmp:size=8m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    restart: unless-stopped
+    stop_grace_period: 15s

@@ -18,9 +18,11 @@ jobs:
           node-version: 22
       - run: npm test
       - name: Validate shell scripts
-        run: bash -n deploy/pi/*.sh
+        run: bash -n install.sh deploy/pi/*.sh
       - name: Validate Compose model
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          docker compose --env-file .env.example config --quiet
+          docker compose --env-file .env.example config | grep -q '127.0.0.1:18080'
       - name: Validate rendered Nginx edge
         run: |
           docker run --rm \

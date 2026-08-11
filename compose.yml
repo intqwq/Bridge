@@ -4,18 +4,17 @@ services:
   edge:
     image: nginx:1.27-alpine
     environment:
+      EDGE_PORT: "${EDGE_PORT:-18080}"
       ALGOQUEST_DOMAIN: "${ALGOQUEST_DOMAIN:-game.intqwq.com}"
-      ALGOQUEST_ORIGIN: "${ALGOQUEST_ORIGIN:-http://host.docker.internal:18081}"
+      ALGOQUEST_ORIGIN: "${ALGOQUEST_ORIGIN:-http://127.0.0.1:18081}"
       INTQWQ_DOMAIN: "${INTQWQ_DOMAIN:-intqwq.com}"
-      INTQWQ_ORIGIN: "${INTQWQ_ORIGIN:-http://host.docker.internal:18082}"
+      INTQWQ_ORIGIN: "${INTQWQ_ORIGIN:-http://127.0.0.1:18082}"
       INTQWQ_WWW_DOMAIN: "${INTQWQ_WWW_DOMAIN:-www.intqwq.com}"
-      NGINX_ENVSUBST_FILTER: "^(ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    # cloudflared is the only public ingress. Do not make the edge reachable
-    # from the LAN or a host public interface.
-    ports:
-      - "127.0.0.1:${EDGE_PORT:-18080}:8080"
+      NGINX_ENVSUBST_FILTER: "^(EDGE_PORT|ALGOQUEST_DOMAIN|ALGOQUEST_ORIGIN|INTQWQ_DOMAIN|INTQWQ_ORIGIN|INTQWQ_WWW_DOMAIN)$"
+    # Linux host networking is deliberate: both application origins are bound
+    # to the host loopback interface. Nginx itself also binds only loopback, so
+    # cloudflared remains the sole public ingress.
+    network_mode: host
     volumes:
       - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
     read_only: true
@@ -27,7 +26,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${EDGE_PORT:-18080}/healthz"]
       interval: 5s
       timeout: 3s
       retries: 20

@@ -21,6 +21,16 @@ get_env_value() {
   printf '%s' "${value:-${fallback}}"
 }
 
+migrate_legacy_origin() {
+  local key="$1" legacy="$2" replacement="$3"
+  local current
+  current="$(get_env_value "${key}" "")"
+  if [[ "${current}" == "${legacy}" ]]; then
+    sed -i "s|^${key}=.*$|${key}=${replacement}|" "${env_file}"
+    printf '[Bridge] migrated %s from Docker host-gateway to host loopback\n' "${key}"
+  fi
+}
+
 [[ "${wait_timeout}" =~ ^[1-9][0-9]*$ ]] || die "BRIDGE_COMPOSE_WAIT_TIMEOUT must be a positive integer."
 [[ "${allow_unhealthy}" == "0" || "${allow_unhealthy}" == "1" ]] || die "BRIDGE_ALLOW_UNHEALTHY_ORIGINS must be 0 or 1."
 command -v docker >/dev/null || die "Docker is missing."
@@ -33,10 +43,15 @@ if [[ ! -f "${env_file}" ]]; then
 fi
 chmod 600 "${env_file}"
 
+migrate_legacy_origin ALGOQUEST_ORIGIN \
+  "http://host.docker.internal:18081" "http://127.0.0.1:18081"
+migrate_legacy_origin INTQWQ_ORIGIN \
+  "http://host.docker.internal:18082" "http://127.0.0.1:18082"
+bash "${script_dir}/check-network-boundary.sh"
+
 edge_port="$(get_env_value EDGE_PORT 18080)"
 algoquest_domain="$(get_env_value ALGOQUEST_DOMAIN game.intqwq.com)"
 intqwq_domain="$(get_env_value INTQWQ_DOMAIN intqwq.com)"
-[[ "${edge_port}" =~ ^[0-9]+$ ]] || die "EDGE_PORT must be an integer."
 
 cd "${project_root}"
 compose=(docker compose --env-file "${env_file}")

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/intqwq/Bridge/blob/main/schema/manifest-v1.schema.json",
+  "title": "Bridge service registration manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "service", "routes"],
+  "properties": {
+    "version": { "const": 1 },
+    "service": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/route" }
+    }
+  },
+  "$defs": {
+    "hostname": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$"
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostname"],
+      "properties": {
+        "hostname": { "$ref": "#/$defs/hostname" },
+        "origin": {
+          "type": "string",
+          "pattern": "^http://127\\.0\\.0\\.1:(?:[1-9][0-9]{0,4})$"
+        },
+        "redirect_to": { "$ref": "#/$defs/hostname" },
+        "health_path": {
+          "type": "string",
+          "pattern": "^/\\S*$"
+        },
+        "client_max_body_size": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*[kKmMgG]?$"
+        },
+        "proxy_read_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["origin"],
+          "not": { "required": ["redirect_to"] }
+        },
+        {
+          "required": ["redirect_to"],
+          "not": { "required": ["origin"] }
+        }
+      ]
+    }
+  }
+}

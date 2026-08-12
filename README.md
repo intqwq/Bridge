@@ -1,71 +1,84 @@
 # Bridge
 
-Bridge is a neutral, host-local ingress platform for self-hosted applications.
-It owns the machine's public networking layer while applications remain private
-loopback origins and register themselves declaratively.
+**A small, declarative ingress layer for self-hosted applications.**
 
-Bridge does **not** contain application hostnames, ports, repository paths, or
-application lifecycle logic.
+Bridge owns a machine's public networking boundary so individual applications do not need to know about Cloudflare Tunnel, NGINX configuration, certificates or each other. Applications stay private on host loopback and register public hostnames through a tiny JSON manifest.
 
-## Architecture
+[![CI](https://github.com/intqwq/Bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/intqwq/Bridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## Why Bridge?
+
+A self-hosted machine often grows into a thicket of one-off NGINX files, competing tunnels, copied Cloudflare credentials and installers that modify each other's networking. Bridge turns that shared edge into one explicit component.
 
 ```text
 Internet
    |
-Cloudflare
-   |
-one Cloudflare Tunnel
+Cloudflare DNS + Tunnel
    |
 127.0.0.1:18080
    |
-Bridge Nginx edge
+Bridge NGINX edge
    |
 service registry
-   +---- hostname A -> http://127.0.0.1:PORT_A
-   +---- hostname B -> http://127.0.0.1:PORT_B
-   +---- hostname C -> HTTPS redirect
-   +---- ...
+   +---- app.example.com  -> http://127.0.0.1:18100
+   +---- api.example.com  -> http://127.0.0.1:18101
+   +---- www.example.com  -> redirect
 ```
 
-The invariant is simple:
+The rules are intentionally strict:
 
-- Bridge installs first and is healthy with zero registered applications.
-- Bridge alone owns the Cloudflare Tunnel and public hostname routing.
+- Bridge installs and runs with zero applications.
+- Bridge alone owns the host's public tunnel and hostname routing.
 - Application origins bind to `127.0.0.1`, never the LAN/public interface.
-- Applications call the `bridge` registrar after their local origin is healthy.
-- Bridge validates registrations, renders isolated Nginx server blocks, tests
-  Nginx before reload, and creates the tunnel DNS route for each hostname.
-- Removing one registration does not restart or modify any other application.
+- A hostname can belong to only one service.
+- Registrations are health-gated when requested, tested with `nginx -t`, and rolled back if reload fails.
+- Application names, ports and repository paths never belong in Bridge core configuration.
 
-## Raspberry Pi install
+## Platform support
 
-On 64-bit Ubuntu/Debian:
+| Platform | Status | Runtime |
+| --- | --- | --- |
+| Ubuntu/Debian x86_64 | Supported | Docker Engine + Compose |
+| Ubuntu/Debian arm64, including Raspberry Pi | Supported | Docker Engine + Compose |
+| Windows 10/11 | Supported | Docker Desktop 4.34+ using Linux containers and host networking |
+
+See [Linux installation](docs/linux.md) and [Windows installation](docs/windows.md) for platform details.
+
+## Quick start: Linux
 
 ```bash
 git clone https://github.com/intqwq/Bridge.git
 cd Bridge
 sudo bash install.sh
-```
 
-The installer provisions Docker/Compose, `cloudflared`, `jq`, the local Bridge
-registry, the `bridge` CLI, the Nginx edge, systemd units, and a locally managed
-Cloudflare Tunnel. On first install, `cloudflared tunnel login` opens the normal
-Cloudflare authorization flow.
-
-After installation:
-
-```bash
-sudo systemctl status bridge-edge
-sudo systemctl status bridge-cloudflared
 sudo bridge list
 curl -fsS http://127.0.0.1:18080/healthz
 ```
 
-At this point no website is configured. Install applications afterward.
+## Quick start: Windows
 
-## Registration API
+Enable Docker Desktop host networking, then run an elevated PowerShell:
 
-Applications register by passing a JSON manifest to the root-owned CLI:
+```powershell
+git clone https://github.com/intqwq/Bridge.git
+cd Bridge
+Set-ExecutionPolicy -Scope Process Bypass
+.\install.ps1
+
+bridge doctor
+bridge status
+```
+
+For a local-only install without Cloudflare:
+
+```powershell
+.\install.ps1 -SkipCloudflare
+```
+
+## Register an application
+
+Ship a file such as `bridge-registration.json` in the application repository:
 
 ```json
 {
@@ -74,88 +87,79 @@ Applications register by passing a JSON manifest to the root-owned CLI:
   "routes": [
     {
       "hostname": "app.example.com",
-      "origin": "http://127.0.0.1:18090",
+      "origin": "http://127.0.0.1:18100",
       "health_path": "/healthz",
       "client_max_body_size": "8m",
       "proxy_read_timeout_seconds": 60
     },
     {
       "hostname": "www.example.com",
-      "redirect_to": "example.com"
+      "redirect_to": "app.example.com"
     }
   ]
 }
 ```
 
-Then:
-
-```bash
-sudo bridge register ./bridge-registration.json
-sudo bridge list
-```
-
-`register` is idempotent for the same service ID. A service may update its own
-hostnames/origin, but it cannot claim a hostname already owned by another
-service. Proxy origins are restricted to `http://127.0.0.1:PORT`. Hostnames,
-redirect targets, body sizes, and timeouts are validated before any Nginx file
-is installed.
-
-A registration with `health_path` is accepted only after that local origin
-responds successfully. Bridge runs `nginx -t` before reload and rolls back the
-local registration if the generated configuration is rejected.
-
-For local-only testing without touching DNS:
-
-```bash
-sudo bridge register ./bridge-registration.json --no-dns
-```
-
-## Unregister
-
-```bash
-sudo bridge unregister my-service
-```
-
-This removes only that service's registry entry and Nginx server blocks, then
-reloads the shared edge. Bridge intentionally does not delete the Cloudflare DNS
-record because `cloudflared tunnel route dns` manages creation but does not
-provide the corresponding published-hostname deletion workflow. Until the DNS
-record is removed or reused, requests reach Bridge's default `404` server.
-
-## Persistent state
-
-Default paths:
+Then register it after the local application is healthy:
 
 ```text
-/etc/intqwq-bridge/config
-/usr/local/sbin/bridge
-/var/lib/intqwq-bridge/registry/
-/var/lib/intqwq-bridge/nginx/routes/
-~/.cloudflared/bridge.yml
+bridge register ./bridge-registration.json
 ```
 
-`BRIDGE_STATE_DIR`, `EDGE_PORT`, and `BRIDGE_TUNNEL_NAME` are the only runtime
-configuration values in `.env`. Application configuration never belongs there.
+Registration is idempotent for a service ID. To exercise local routing without changing Cloudflare DNS:
 
-## Why host networking is deliberate
+```text
+bridge register ./bridge-registration.json --no-dns
+```
 
-Applications bind their origins to host loopback. A normal Docker bridge
-container cannot reach a host process that listens only on `127.0.0.1` through
-the host-gateway address. The Bridge Nginx container therefore uses
-`network_mode: host`, while Nginx itself explicitly listens only on
-`127.0.0.1:${EDGE_PORT}`. This gives Bridge access to private origins without
-opening the edge or origins to the LAN.
+Remove only that application's routes with:
 
-## Adding another application
+```text
+bridge unregister my-service
+```
 
-No Bridge source change is required:
+The full contract is documented in [Registration manifest reference](docs/manifest-reference.md) and `schema/manifest-v1.schema.json`.
 
-1. Choose an unused loopback port.
-2. Start the application on `127.0.0.1:PORT`.
-3. Create a registration manifest in the application repository.
-4. Run `sudo bridge register <manifest>` from the application installer.
-5. On uninstall, run `sudo bridge unregister <service-id>` before stopping the
-   local origin.
+## Operator commands
 
-This is the complete extension mechanism. New subdomains are data, not Bridge
-code.
+Common commands:
+
+```text
+bridge register <manifest.json> [--no-dns]
+bridge unregister <service-id>
+bridge list
+```
+
+The Windows CLI additionally exposes diagnostics and automation helpers:
+
+```text
+bridge validate <manifest.json>
+bridge inspect <service-id>
+bridge list --json
+bridge status [--json]
+bridge doctor
+```
+
+## Architecture and security
+
+Bridge uses Docker host networking so the NGINX container can reach host applications that remain bound to loopback. NGINX itself still listens only on `127.0.0.1:${EDGE_PORT}`. This keeps the origin boundary private without introducing per-application Docker networking knowledge into Bridge.
+
+Read [Architecture](docs/architecture.md) for ownership boundaries and [Security Policy](SECURITY.md) for the threat model and reporting process.
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Linux](docs/linux.md)
+- [Windows](docs/windows.md)
+- [Registration manifest reference](docs/manifest-reference.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+
+## Project philosophy
+
+Bridge is infrastructure glue, not an application platform. New applications should normally require **zero Bridge source changes**: choose a loopback port, start the application, and register a manifest. If adding an application requires editing Bridge itself, that is usually a signal that the abstraction boundary has leaked.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -54,12 +54,15 @@ test("Bridge installs before and independently from applications", async () => {
   assert.doesNotMatch(systemd, /Requires=.*algoquest|Requires=.*intqwq-site/i);
 });
 
-test("Cloudflare tunnel is hostname-agnostic", async () => {
+test("Cloudflare tunnel is hostname-agnostic and supports an empty account", async () => {
   const cloudflare = await read("deploy/pi/configure-cloudflare.sh");
   assert.match(cloudflare, /ingress:\n  - service: http:\/\/127\.0\.0\.1:\$\{edge_port\}/);
   assert.doesNotMatch(cloudflare, /hostname:/);
   assert.doesNotMatch(cloudflare, /tunnel route dns --overwrite-dns/);
   assert.match(cloudflare, /BRIDGE_TUNNEL_ID/);
+  assert.match(cloudflare, /if type == "array" then \./);
+  assert.match(cloudflare, /else \[\] end/);
+  assert.match(cloudflare, /Cloudflare tunnel '\$\{tunnel_name\}' does not exist yet; creating it/);
   assert.match(cloudflare, /No application hostname is configured/);
 });
 

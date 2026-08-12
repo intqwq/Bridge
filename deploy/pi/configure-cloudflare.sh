@@ -42,16 +42,26 @@ if [[ ! -f "${cloudflare_dir}/cert.pem" ]]; then
 fi
 
 find_tunnel_id() {
-  as_operator cloudflared tunnel list --output json 2>/dev/null | \
-    jq -r --arg name "${tunnel_name}" '[.[] | select(.name == $name and ((.deletedAt // "") == ""))][0].id // empty'
+  local tunnel_json
+  if ! tunnel_json="$(as_operator cloudflared tunnel list --output json 2>/dev/null)"; then
+    die "Could not list Cloudflare tunnels. Check cloudflared authentication and network access."
+  fi
+
+  jq -r --arg name "${tunnel_name}" '
+    (if type == "array" then .
+     elif type == "object" and (.tunnels | type) == "array" then .tunnels
+     else [] end)
+    | [.[] | select(.name == $name and ((.deletedAt // "") == ""))][0].id // empty
+  ' <<< "${tunnel_json}"
 }
 
 tunnel_id="$(find_tunnel_id)"
 if [[ -z "${tunnel_id}" ]]; then
+  echo "[Bridge] Cloudflare tunnel '${tunnel_name}' does not exist yet; creating it."
   as_operator cloudflared tunnel create "${tunnel_name}"
   tunnel_id="$(find_tunnel_id)"
 fi
-[[ -n "${tunnel_id}" ]] || die "Could not resolve tunnel '${tunnel_name}'."
+[[ -n "${tunnel_id}" ]] || die "Could not resolve tunnel '${tunnel_name}' after creation."
 credentials_file="${cloudflare_dir}/${tunnel_id}.json"
 [[ -f "${credentials_file}" ]] || die "Missing tunnel credentials: ${credentials_file}"
 

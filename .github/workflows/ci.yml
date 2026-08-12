@@ -2,23 +2,51 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/**"]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  validate:
-    runs-on: ubuntu-latest
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
+          package-manager-cache: false
       - run: npm test
       - name: Validate shell scripts
+        if: runner.os == 'Linux'
         run: bash -n install.sh bin/bridge deploy/pi/*.sh
+      - name: Validate PowerShell scripts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @('.\install.ps1', '.\bin\bridge.ps1') + (Get-ChildItem '.\deploy\windows\*.ps1').FullName
+          $failed = $false
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              Write-Host "PowerShell parse errors in $file" -ForegroundColor Red
+              $errors | Format-List
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+
+  linux-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
       - name: Validate neutral core contract
         run: |
           docker compose --env-file .env.example config --quiet
@@ -26,7 +54,7 @@ jobs:
           grep -Fq 'listen 127.0.0.1:${EDGE_PORT}' nginx/default.conf.template
           grep -Fq 'include /etc/nginx/routes/*.conf;' nginx/default.conf.template
           ! grep -R -E 'ALGOQUEST_|INTQWQ_DOMAIN|INTQWQ_ORIGIN|game\.intqwq\.com|www\.intqwq\.com' \
-            compose.yml .env.example nginx bin deploy/pi README.md
+            compose.yml .env.example .env.windows.example nginx bin deploy README.md docs schema
       - name: Validate rendered empty Bridge edge
         run: |
           routes="$(mktemp -d)"
@@ -117,3 +145,5 @@ jobs:
           trap 'rm -f .env; sudo rm -rf "${unit_dir}" "${state_dir}"' EXIT
           sudo env BRIDGE_SYSTEMD_DRY_RUN=1 BRIDGE_SYSTEMD_UNIT_PATH="${unit_file}" \
             bash deploy/pi/install-systemd.sh
+          grep -q 'Description=Bridge neutral ingress edge' "${unit_file}"
+          grep -q 'docker compose' "${unit_file}"

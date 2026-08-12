@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible Bridge failure
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a Bridge bug.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux (x86_64)
+        - Linux (arm64 / Raspberry Pi)
+        - Windows 10/11
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Bridge commit/version
+      placeholder: main @ abc1234 or v1.x
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command, expected behavior and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start an origin on ...
+        2. Run bridge register ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste relevant `bridge doctor`, Docker, NGINX, systemd or cloudflared output. Remove secrets and credentials.
+      render: shell
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed Cloudflare credentials, tokens, certificates and other secrets from this report.
+          required: true

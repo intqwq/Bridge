@@ -68,7 +68,29 @@ bridge inspect my-service
 
 ## Cloudflare service ownership
 
-Bridge assumes it owns the host's `cloudflared` Windows service. The installer points that service at Bridge's generated catch-all tunnel configuration. Do not run a second application-specific Cloudflare Tunnel service on the same host. Register application hostnames through Bridge instead.
+Bridge uses the host's `cloudflared` Windows service for its catch-all tunnel configuration. If that service already exists, current installs record its previous command line and running state before Bridge takes control. The uninstaller restores that prior configuration. If Bridge created the service, the uninstaller removes it.
+
+Older Bridge installs did not record that ownership metadata. Their uninstaller takes the conservative path: if the service points at Bridge but its previous configuration is unknown, it stops the service and leaves it installed rather than deleting something that may have predated Bridge.
+
+Do not run a second application-specific Cloudflare Tunnel service on the same host. Register application hostnames through Bridge instead.
+
+## Uninstall
+
+From an elevated PowerShell in the Bridge checkout:
+
+```powershell
+.\uninstall.ps1
+```
+
+To preserve `%ProgramData%\intqwq-bridge` for a later reinstall:
+
+```powershell
+.\uninstall.ps1 -KeepState
+```
+
+The uninstaller brings down the Bridge Compose project, removes the Bridge CLI and its machine `PATH` entry, removes generated runtime configuration/state unless requested otherwise, and safely handles the `cloudflared` service ownership described above.
+
+It deliberately **does not** uninstall Docker Desktop, remove the `cloudflared` executable, delete the user's `%USERPROFILE%\.cloudflared` account credentials, or delete the remote Cloudflare tunnel/DNS records. Those resources may be shared and must be removed explicitly only after verifying that nothing else depends on them.
 
 ## Updating
 

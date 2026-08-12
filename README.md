@@ -120,6 +120,26 @@ bridge unregister my-service
 
 The full contract is documented in [Registration manifest reference](docs/manifest-reference.md) and `schema/manifest-v1.schema.json`.
 
+## Uninstall
+
+Linux:
+
+```bash
+sudo bash uninstall.sh
+# Preserve registry/state for a later reinstall:
+sudo bash uninstall.sh --keep-state
+```
+
+Windows, from an elevated PowerShell:
+
+```powershell
+.\uninstall.ps1
+# Preserve registry/state for a later reinstall:
+.\uninstall.ps1 -KeepState
+```
+
+The uninstallers remove only Bridge-owned local runtime pieces. They intentionally preserve Docker/cloudflared installations, Cloudflare account credentials, the remote tunnel and DNS records. See the platform guides for the exact cleanup and service-restoration behavior.
+
 ## Operator commands
 
 Common commands:

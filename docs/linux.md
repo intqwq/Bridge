@@ -51,6 +51,24 @@ sudo bridge unregister my-service
 
 Bridge removes only that service's local registry and generated NGINX configuration. The Cloudflare DNS route is intentionally preserved until you remove it or reuse the hostname.
 
+## Uninstall
+
+From the Bridge checkout:
+
+```bash
+sudo bash uninstall.sh
+```
+
+The uninstaller stops/removes `bridge-edge.service` and `bridge-cloudflared.service`, brings down the Bridge Compose project, removes the installed `bridge` CLI, generated `.env`, Bridge-owned `~/.cloudflared/bridge.yml`, and Bridge state/config.
+
+To keep the registry and generated state for a later reinstall:
+
+```bash
+sudo bash uninstall.sh --keep-state
+```
+
+The uninstaller deliberately **does not** remove Docker, the `cloudflared` package, Docker/cloudflared apt repositories, the operator's Cloudflare login certificate or tunnel credential JSON, the remote Cloudflare tunnel, or DNS records. Remote resources may be shared or needed for a later reinstall and must be removed explicitly only after verifying that nothing else depends on them.
+
 ## State and configuration
 
 Defaults:

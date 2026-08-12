@@ -24,12 +24,12 @@ jobs:
       - run: npm test
       - name: Validate shell scripts
         if: runner.os == 'Linux'
-        run: bash -n install.sh bin/bridge deploy/pi/*.sh
+        run: bash -n install.sh uninstall.sh bin/bridge deploy/pi/*.sh
       - name: Validate PowerShell scripts
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $files = @('.\install.ps1', '.\bin\bridge.ps1') + (Get-ChildItem '.\deploy\windows\*.ps1').FullName
+          $files = @('.\install.ps1', '.\uninstall.ps1', '.\bin\bridge.ps1') + (Get-ChildItem '.\deploy\windows\*.ps1').FullName
           $failed = $false
           foreach ($file in $files) {
             $tokens = $null

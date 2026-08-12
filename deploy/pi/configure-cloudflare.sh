@@ -40,12 +40,18 @@ if [[ ! -f "${cloudflare_dir}/cert.pem" ]]; then
   echo "[Bridge] Authorize the Cloudflare account containing hostnames that applications will register."
   as_operator cloudflared tunnel login
 fi
+[[ -r "${cloudflare_dir}/cert.pem" ]] || die "Cloudflare account certificate is not readable: ${cloudflare_dir}/cert.pem"
 
 find_tunnel_id() {
-  local tunnel_json
-  if ! tunnel_json="$(as_operator cloudflared tunnel list --output json 2>/dev/null)"; then
-    die "Could not list Cloudflare tunnels. Check cloudflared authentication and network access."
+  local tunnel_json err_file
+  err_file="$(mktemp)"
+  if ! tunnel_json="$(as_operator cloudflared tunnel list --output json 2>"${err_file}")"; then
+    echo "[Bridge] cloudflared tunnel list failed:" >&2
+    sed 's/^/[cloudflared] /' "${err_file}" >&2 || true
+    rm -f "${err_file}"
+    die "Could not list Cloudflare tunnels. If the message indicates authentication failure, rerun 'cloudflared tunnel login' as ${operator_user}; if it indicates a connection failure, check this host's direct/proxy access to Cloudflare."
   fi
+  rm -f "${err_file}"
 
   jq -r --arg name "${tunnel_name}" '
     (if type == "array" then .

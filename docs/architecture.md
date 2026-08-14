@@ -31,6 +31,8 @@ Bridge owns:
 - route validation, conflict detection, health gating, reload and rollback;
 - the registry of which service owns each hostname.
 
+Bridge does **not** own unrelated DNS records in the Cloudflare zone. In particular, MX, TXT, DKIM, SPF, DMARC, verification records, Cloudflare Email Routing records, and Cloudflare Email Sending records remain outside Bridge's ownership. DNS registration is additive and non-destructive: Bridge asks Cloudflare to create a tunnel route, but does not overwrite an existing record automatically.
+
 Applications own:
 
 - their process/container lifecycle;
@@ -50,6 +52,8 @@ Applications must not install their own reverse proxy, Cloudflare Tunnel, public
 6. NGINX must accept the generated configuration before reload.
 7. A failed reload restores the previous registry and route files.
 8. Bridge contains no application-specific hostnames or repository paths.
+9. Bridge does not overwrite existing Cloudflare DNS records during registration.
+10. Mail-related DNS remains owned by Cloudflare Email Routing, Cloudflare Email Sending, or the operator's mail provider, never by Bridge.
 
 ## Why host networking
 

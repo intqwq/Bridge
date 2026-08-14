@@ -33,7 +33,11 @@ test("Bridge registrar accepts manifests instead of site-specific settings", asy
   assert.match(cli, /Hostname .* is already owned by service/);
   assert.match(cli, /nginx -t/);
   assert.match(cli, /nginx -s reload/);
-  assert.match(cli, /tunnel route dns --overwrite-dns/);
+  assert.match(cli, /cloudflared tunnel route dns/);
+  assert.doesNotMatch(cli, /--overwrite-dns/);
+  assert.match(cli, /Bridge will not overwrite existing DNS records/);
+  assert.match(cli, /previous_manifest/);
+  assert.match(cli, /already exists\|conflicting record\|code:/);
   assert.match(cli, /bridge unregister/);
   assert.doesNotMatch(cli, /AlgoQuest|intqwq\.com|game\.intqwq\.com/);
 });

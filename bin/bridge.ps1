@@ -166,19 +166,40 @@ function Reload-Edge {
   Invoke-Compose @('exec', '-T', 'edge', 'nginx', '-s', 'reload')
 }
 
-function Sync-Dns($Manifest) {
+function Sync-Dns($Manifest, $PreviousManifest) {
   $cloudflared = Get-Command cloudflared -ErrorAction SilentlyContinue
   if (-not $cloudflared) { Fail 'cloudflared is missing.' }
   $tunnel = if ($TunnelId) { $TunnelId } else { $TunnelName }
   $failed = $false
   foreach ($route in @($Manifest.routes)) {
-    & $cloudflared.Source tunnel route dns --overwrite-dns $tunnel ([string]$route.hostname)
-    if ($LASTEXITCODE -ne 0) {
-      [Console]::Error.WriteLine("[Bridge] ERROR: DNS route failed for $($route.hostname). Local registration remains active.")
-      $failed = $true
-    } else { Log "DNS route synced: $($route.hostname) -> tunnel $tunnel" }
+    $host = [string]$route.hostname
+    $output = & $cloudflared.Source tunnel route dns $tunnel $host 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -eq 0) {
+      if ($output) { $output | ForEach-Object { Write-Host $_ } }
+      Log "DNS route synced: $host -> tunnel $tunnel"
+      continue
+    }
+
+    $wasRegistered = $false
+    if ($null -ne $PreviousManifest) {
+      $wasRegistered = @($PreviousManifest.routes | Where-Object { [string]$_.hostname -eq $host }).Count -gt 0
+    }
+    $details = ($output -join "`n")
+    $isConflict = $details -match '(?i)(already exists|conflicting record|code:\s*1003)'
+    if ($wasRegistered -and $isConflict) {
+      Log "DNS route unchanged: $host already belonged to this Bridge service; existing Cloudflare DNS was preserved."
+      continue
+    }
+
+    [Console]::Error.WriteLine("[Bridge] ERROR: DNS route failed for $host. Bridge will not overwrite existing DNS records.")
+    if ($details) {
+      foreach ($line in ($details -split "`r?`n")) { [Console]::Error.WriteLine("[cloudflared] $line") }
+    }
+    [Console]::Error.WriteLine('[Bridge] ERROR: Local registration remains active. Resolve the DNS conflict manually, or rerun with --no-dns if the existing record is intentional.')
+    $failed = $true
   }
-  if ($failed) { Fail 'One or more Cloudflare DNS routes failed.' }
+  if ($failed) { Fail 'One or more Cloudflare DNS routes failed without modifying existing DNS.' }
 }
 
 function Register-Service([string]$ManifestPath, [bool]$SyncDns) {
@@ -192,6 +213,7 @@ function Register-Service([string]$ManifestPath, [bool]$SyncDns) {
   $registryFile = Join-Path $RegistryDir "$service.json"
   $routeFile = Join-Path $RoutesDir "$service.conf"
   $oldRegistry = if (Test-Path $registryFile) { Get-Content -Raw $registryFile } else { $null }
+  $oldManifest = if ($null -ne $oldRegistry) { $oldRegistry | ConvertFrom-Json } else { $null }
   $oldRoute = if (Test-Path $routeFile) { Get-Content -Raw $routeFile } else { $null }
   Write-Utf8NoBom $registryFile (($manifest | ConvertTo-Json -Depth 16) + "`n")
   Write-Utf8NoBom $routeFile ((Render-Manifest $manifest) + "`n")
@@ -202,7 +224,7 @@ function Register-Service([string]$ManifestPath, [bool]$SyncDns) {
     throw
   }
   Log "registered service $service"
-  if ($SyncDns) { Sync-Dns $manifest }
+  if ($SyncDns) { Sync-Dns $manifest $oldManifest }
 }
 
 function Unregister-Service([string]$Service) {

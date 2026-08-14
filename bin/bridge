@@ -203,21 +203,32 @@ as_operator() {
 }
 
 sync_dns() {
-  local manifest="$1" host tunnel="${BRIDGE_TUNNEL_ID:-${BRIDGE_TUNNEL_NAME}}" failed=0
+  local manifest="$1" previous_manifest="${2:-}" host tunnel="${BRIDGE_TUNNEL_ID:-${BRIDGE_TUNNEL_NAME}}" failed=0 output
   command -v cloudflared >/dev/null || die "cloudflared is missing."
   while IFS= read -r host; do
-    if as_operator cloudflared tunnel route dns --overwrite-dns "${tunnel}" "${host}"; then
+    if output="$(as_operator cloudflared tunnel route dns "${tunnel}" "${host}" 2>&1)"; then
+      [[ -z "${output}" ]] || printf '%s\n' "${output}"
       log "DNS route synced: ${host} -> tunnel ${tunnel}"
-    else
-      printf '[Bridge] ERROR: DNS route failed for %s. Local registration remains active; rerun registration after fixing Cloudflare access.\n' "${host}" >&2
-      failed=1
+      continue
     fi
+
+    if [[ -n "${previous_manifest}" && -f "${previous_manifest}" ]] && \
+       jq -e --arg host "${host}" '.routes[] | select(.hostname == $host)' "${previous_manifest}" >/dev/null && \
+       grep -Eqi 'already exists|conflicting record|code:[[:space:]]*1003' <<< "${output}"; then
+      log "DNS route unchanged: ${host} already belonged to this Bridge service; existing Cloudflare DNS was preserved."
+      continue
+    fi
+
+    printf '[Bridge] ERROR: DNS route failed for %s. Bridge will not overwrite existing DNS records.\n' "${host}" >&2
+    [[ -z "${output}" ]] || printf '%s\n' "${output}" | sed 's/^/[cloudflared] /' >&2
+    printf '[Bridge] ERROR: Local registration remains active. Resolve the DNS conflict manually, or rerun with --no-dns if the existing record is intentional.\n' >&2
+    failed=1
   done < <(jq -r '.routes[].hostname' "${manifest}")
   return "${failed}"
 }
 
 register_service() {
-  local manifest="$1" sync="${2:-1}" service normalized rendered backup_dir registry_file route_file
+  local manifest="$1" sync="${2:-1}" service normalized rendered backup_dir registry_file route_file dns_failed=0 previous_manifest=""
   require_root
   require_runtime
   install -d -m 0755 "${REGISTRY_DIR}" "${ROUTES_DIR}"
@@ -233,7 +244,10 @@ register_service() {
   route_file="${ROUTES_DIR}/${service}.conf"
   jq -S . "${manifest}" > "${normalized}"
   render_manifest "${normalized}" "${rendered}"
-  [[ ! -f "${registry_file}" ]] || cp "${registry_file}" "${backup_dir}/old.json"
+  if [[ -f "${registry_file}" ]]; then
+    cp "${registry_file}" "${backup_dir}/old.json"
+    previous_manifest="${backup_dir}/old.json"
+  fi
   [[ ! -f "${route_file}" ]] || cp "${route_file}" "${backup_dir}/old.conf"
 
   install -m 0644 "${normalized}" "${registry_file}"
@@ -247,9 +261,12 @@ register_service() {
     rm -rf "${backup_dir}"
     die "Nginx rejected the generated registration for ${service}."
   fi
-  rm -rf "${backup_dir}"
   log "registered service ${service}"
-  [[ "${sync}" == "0" ]] || sync_dns "${registry_file}"
+  if [[ "${sync}" != "0" ]]; then
+    sync_dns "${registry_file}" "${previous_manifest}" || dns_failed=1
+  fi
+  rm -rf "${backup_dir}"
+  (( dns_failed == 0 )) || return 1
 }
 
 unregister_service() {

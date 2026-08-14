@@ -66,12 +66,22 @@ logfile: "$logPath"
 if ($LASTEXITCODE -ne 0) { Fail 'cloudflared rejected the generated ingress configuration.' }
 
 $service = Get-Service -Name cloudflared -ErrorAction SilentlyContinue
+$serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\Cloudflared'
+$servicePreexisting = [bool]$service
+$previousImagePath = ''
+$previousWasRunning = $false
+if ($servicePreexisting) {
+  $previousWasRunning = $service.Status -eq 'Running'
+  if (Test-Path $serviceKey) {
+    $previousImagePath = [string](Get-ItemProperty -Path $serviceKey -Name ImagePath).ImagePath
+  }
+}
+
 if (-not $service) {
   Log 'Installing cloudflared as a Windows service.'
   & $CloudflaredExe service install
   if ($LASTEXITCODE -ne 0) { Fail 'cloudflared service install failed.' }
 }
-$serviceKey = 'HKLM:\SYSTEM\CurrentControlSet\Services\Cloudflared'
 if (-not (Test-Path $serviceKey)) { Fail 'Cloudflared Windows service registry entry was not created.' }
 $imagePath = "`"$CloudflaredExe`" --config=`"$ConfigPath`" tunnel run"
 Set-ItemProperty -Path $serviceKey -Name ImagePath -Value $imagePath
@@ -85,6 +95,9 @@ $configFile = Join-Path $StateDir 'config.json'
 $config = Get-Content -Raw -LiteralPath $configFile | ConvertFrom-Json
 $config | Add-Member -NotePropertyName tunnelId -NotePropertyValue $TunnelId -Force
 $config | Add-Member -NotePropertyName cloudflaredConfig -NotePropertyValue $ConfigPath -Force
+$config | Add-Member -NotePropertyName cloudflaredServicePreexisting -NotePropertyValue $servicePreexisting -Force
+$config | Add-Member -NotePropertyName cloudflaredPreviousImagePath -NotePropertyValue $previousImagePath -Force
+$config | Add-Member -NotePropertyName cloudflaredPreviousWasRunning -NotePropertyValue $previousWasRunning -Force
 $config | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $configFile
 
 Log "Cloudflare tunnel ready: $TunnelName ($TunnelId)"

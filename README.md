@@ -76,6 +76,24 @@ For a local-only install without Cloudflare:
 .\install.ps1 -SkipCloudflare
 ```
 
+## Uninstall
+
+Linux:
+
+```bash
+sudo bash uninstall.sh
+```
+
+Windows, from an elevated PowerShell:
+
+```powershell
+.\uninstall.ps1
+```
+
+The uninstallers remove Bridge-owned local services, containers, CLI files and runtime state. They intentionally preserve Docker/cloudflared packages, Cloudflare account credentials, the remote tunnel, and all Cloudflare DNS records. This keeps unrelated DNS, including mail-routing records, outside Bridge's blast radius.
+
+To preserve the Bridge registry/state while removing the runtime, use `--keep-state` on Linux or `-KeepState` on Windows. Linux and Windows also support `--purge-env` / `-PurgeEnv` when you explicitly want the repository `.env` deleted.
+
 ## Register an application
 
 Ship a file such as `bridge-registration.json` in the application repository:

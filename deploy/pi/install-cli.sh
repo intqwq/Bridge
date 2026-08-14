@@ -39,6 +39,7 @@ install -m 0755 "${project_root}/bin/bridge" "${cli_path}"
   printf 'BRIDGE_EDGE_PORT=%q\n' "${edge_port}"
   printf 'BRIDGE_OPERATOR_USER=%q\n' "${operator_user}"
   printf 'BRIDGE_TUNNEL_NAME=%q\n' "${tunnel_name}"
+  printf 'BRIDGE_CLI_PATH=%q\n' "${cli_path}"
 } > "${config_file}"
 chmod 0644 "${config_file}"
 

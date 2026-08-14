@@ -16,7 +16,11 @@ test("Windows keeps the same loopback-only registrar contract", async () => {
   assert.match(cli, /Hostname .* is already owned by service/);
   assert.match(cli, /nginx', '-t'/);
   assert.match(cli, /nginx', '-s', 'reload'/);
-  assert.match(cli, /tunnel route dns --overwrite-dns/);
+  assert.match(cli, /tunnel route dns/);
+  assert.doesNotMatch(cli, /--overwrite-dns/);
+  assert.match(cli, /Bridge will not overwrite existing DNS records/);
+  assert.match(cli, /PreviousManifest/);
+  assert.match(cli, /already exists\|conflicting record\|code:/);
   assert.match(cli, /Register-Service/);
   assert.match(cli, /Unregister-Service/);
   assert.match(cli, /Doctor/);
@@ -51,6 +55,7 @@ test("public project surfaces a schema and platform documentation", async () => 
   assert.match(readme, /Ubuntu\/Debian arm64/);
   assert.match(readme, /MIT/);
   assert.match(architecture, /Security invariants/);
+  assert.match(architecture, /does not overwrite existing Cloudflare DNS/);
   assert.match(windows, /Enable host networking/);
   assert.match(linux, /Raspberry Pi/);
   assert.match(manifest, /Transaction semantics/);
